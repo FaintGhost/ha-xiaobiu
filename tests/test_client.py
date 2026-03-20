@@ -192,6 +192,62 @@ def test_client_loads_signed_templates_from_har(tmp_path) -> None:
   assert client.available_device_template_family_ids() == ["37790"]
 
 
+def test_list_family_infos_parses_expected_payload_shape(monkeypatch) -> None:
+  client = SuningSmartHomeClient()
+
+  def fake_list_families() -> dict[str, object]:
+    return {
+      "responseCode": "0",
+      "responseData": {
+        "families": [
+          {"familyId": "37790", "familyName": "我的家"},
+        ]
+      },
+    }
+
+  monkeypatch.setattr(client, "list_families", fake_list_families)
+
+  families = client.list_family_infos()
+
+  assert len(families) == 1
+  assert families[0].family_id == "37790"
+  assert families[0].name == "我的家"
+
+
+def test_list_air_conditioner_statuses_filters_non_climate_devices(monkeypatch) -> None:
+  client = SuningSmartHomeClient()
+
+  def fake_list_devices(family_id: str | int) -> dict[str, object]:
+    assert str(family_id) == "37790"
+    return {
+      "responseData": {
+        "devices": [
+          {
+            "id": "ac-1",
+            "name": "卧室空调",
+            "online": "0",
+            "categoryId": "0002",
+            "status": {"onlineStatus": "0"},
+          },
+          {
+            "id": "light-1",
+            "name": "客厅灯",
+            "online": "1",
+            "categoryId": "0001",
+            "status": {"onlineStatus": "1"},
+          },
+        ]
+      }
+    }
+
+  monkeypatch.setattr(client, "list_devices", fake_list_devices)
+
+  statuses = client.list_air_conditioner_statuses("37790")
+
+  assert [status.device_id for status in statuses] == ["ac-1"]
+  assert statuses[0].ha_climate_preview is not None
+
+
 def test_normalize_air_conditioner_status_builds_ha_preview() -> None:
   client = SuningSmartHomeClient()
   raw_device = {

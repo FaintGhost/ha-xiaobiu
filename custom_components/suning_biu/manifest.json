@@ -1,0 +1,19 @@
+{
+  "domain": "suning_biu",
+  "name": "Suning Biu",
+  "codeowners": [
+    "@FaintGhost"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/FaintGhost/ha-suning",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/FaintGhost/ha-suning/issues",
+  "loggers": [
+    "suning_biu_ha"
+  ],
+  "requirements": [
+    "suning-biu-ha @ git+https://github.com/FaintGhost/ha-suning.git@070a9f17706c6a278c5031d2376c13262c239779"
+  ],
+  "version": "0.1.0"
+}

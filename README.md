@@ -2,6 +2,25 @@
 
 Python client for Suning SMS login and smart home session reuse.
 
+## Home Assistant custom component
+
+This repository now also includes a Home Assistant custom integration at `custom_components/suning_biu`.
+
+- Home Assistant version target: `2026.3.2`
+- Setup path: **Settings → Devices & Services → Add Integration → Suning Biu**
+- Config flow inputs:
+  - phone number
+  - international code
+  - HAR file path under the Home Assistant config directory containing the signed `queryAllFamily` / device list app requests
+- Login flow:
+  - the integration sends the SMS code through Suning's current login flow
+  - if Suning requires IAR verification, the config flow shows a local bridge URL for the puzzle page
+  - after SMS login succeeds, the config flow lets you choose a family
+- Entity model:
+  - devices are refreshed through a coordinator with periodic keep-alive
+  - air conditioners in the selected family are exposed as `climate` entities
+  - offline devices are created in Home Assistant as unavailable climate entities
+
 ## What is implemented
 
 - Parse the Suning login page at runtime to extract the current RSA public keys and flow constants.

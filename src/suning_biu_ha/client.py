@@ -19,6 +19,7 @@ from .models import (
   AirConditionerStatus,
   AuthState,
   CaptchaSolution,
+  FamilyInfo,
   HAClimatePreview,
   LoginPageConfig,
   PersistedSessionState,
@@ -39,6 +40,8 @@ FAMILY_LIST_URL = "https://itapig.suning.com/api/trade/shcss/queryAllFamily"
 DEVICE_LIST_URL = "https://itapig.suning.com/api/trade/shcss/all"
 OPENSH_GET_KEY_URL = "https://opensh.suning.com/shsys-web/cc/api/v3/getKey"
 SUCCESS_RESPONSE_CODES = {"0", "SUCCESS"}
+AIR_CONDITIONER_CATEGORY_ID = "0002"
+AIR_CONDITIONER_NAME_KEYWORD = "空调"
 SERVICE_BOOTSTRAP_URLS = {
   "shcss": MEMBER_BASE_INFO_URL,
   "itapig": "http://itapig.suning.com/api/trade/shcss/queryAllFamily",
@@ -568,6 +571,35 @@ class SuningSmartHomeClient:
     self._touch_state()
     return data
 
+  def list_family_infos(self) -> list[FamilyInfo]:
+    payload = self.list_families()
+    response_data = payload.get("responseData")
+    if isinstance(response_data, list):
+      raw_families = response_data
+    elif isinstance(response_data, dict):
+      raw_families = response_data.get("families") or response_data.get("familyList")
+    else:
+      raw_families = None
+    if not isinstance(raw_families, list):
+      raise SuningError("家庭列表返回格式不正确，缺少 families 数组。")
+
+    families: list[FamilyInfo] = []
+    for item in raw_families:
+      if not isinstance(item, dict):
+        raise SuningError("家庭列表项返回格式不正确。")
+      family_id = item.get("familyId")
+      family_name = item.get("familyName")
+      if family_id is None or family_name is None:
+        raise SuningError("家庭列表项缺少 familyId 或 familyName。")
+      families.append(
+        FamilyInfo(
+          family_id=str(family_id),
+          name=str(family_name),
+          raw=item,
+        )
+      )
+    return families
+
   def list_devices(self, family_id: str | int) -> dict[str, Any]:
     request_body = json.dumps(
       {"familyId": str(family_id)},
@@ -615,7 +647,8 @@ class SuningSmartHomeClient:
 
     climate_candidates = [
       device for device in devices
-      if str(device.get("categoryId")) == "0002" or "空调" in str(device.get("name", ""))
+      if str(device.get("categoryId")) == AIR_CONDITIONER_CATEGORY_ID
+      or AIR_CONDITIONER_NAME_KEYWORD in str(device.get("name", ""))
     ]
     if len(climate_candidates) == 1:
       return climate_candidates[0]
@@ -633,6 +666,17 @@ class SuningSmartHomeClient:
   ) -> AirConditionerStatus:
     device = self.get_device(family_id, device_id=device_id)
     return self._normalize_air_conditioner_status(device)
+
+  def list_air_conditioner_statuses(self, family_id: str | int) -> list[AirConditionerStatus]:
+    payload = self.list_devices(family_id)
+    devices = payload.get("responseData", {}).get("devices")
+    if not isinstance(devices, list):
+      raise SuningError("设备列表返回格式不正确，缺少 devices 数组。")
+    return [
+      self._normalize_air_conditioner_status(device)
+      for device in devices
+      if self._is_air_conditioner_device(device)
+    ]
 
   def _normalize_air_conditioner_status(self, device: dict[str, Any]) -> AirConditionerStatus:
     raw_status = device.get("status") or {}
@@ -691,6 +735,11 @@ class SuningSmartHomeClient:
     )
     return status.model_copy(
       update={"ha_climate_preview": self._build_ha_climate_preview(status)}
+    )
+
+  def _is_air_conditioner_device(self, device: dict[str, Any]) -> bool:
+    return str(device.get("categoryId")) == AIR_CONDITIONER_CATEGORY_ID or (
+      AIR_CONDITIONER_NAME_KEYWORD in str(device.get("name", ""))
     )
 
   def _build_ha_climate_preview(self, status: AirConditionerStatus) -> HAClimatePreview:
