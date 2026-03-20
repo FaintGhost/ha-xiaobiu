@@ -7,6 +7,7 @@ Python client for Suning SMS login and smart home session reuse.
 This repository now also includes a Home Assistant custom integration at `custom_components/suning_biu`.
 
 - Home Assistant version target: `2026.3.2`
+- Project Python target: `3.14`
 - Setup path: **Settings → Devices & Services → Add Integration → Suning Biu**
 - Config flow inputs:
   - phone number

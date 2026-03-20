@@ -1,5 +1,97 @@
 # 苏宁小 biu 智家短信登录接入任务
 
+## Python 3.14 And Full Test Pass
+
+### Plan
+
+- [x] 将仓库的 `uv` / Python 默认版本同步到 `3.14`，并更新锁文件与文档约束
+- [x] 修正 Home Assistant 自定义集成的 `strings.json` 与翻译源不一致问题
+- [x] 补齐当前 codebase 的测试，优先覆盖自定义集成入口、实体与运行时依赖装载逻辑
+- [x] 用 Python `3.14` 跑完整验证，整理 codebase 摘要并提交 commit
+
+### Notes
+
+- 当前项目根目录 `.python-version` 已同步为 `3.14`
+- `pyproject.toml` 的 `requires-python` 已同步为 `>=3.14`
+
+### Review
+
+- 已完成 Python 3.14 同步
+  - `.python-version` 已更新为 `3.14`
+  - `pyproject.toml` 的 `requires-python` 已更新为 `>=3.14`
+  - 重新执行 `uv lock --python 3.14` 与 `uv sync --dev --python 3.14`
+- 已修正国际化源文件
+  - `custom_components/suning_biu/strings.json` 已补齐 `reauth_confirm` / `reconfigure` / `reauth_successful` / `reconfigure_successful`
+  - 现在 `strings.json` 与 `translations/*.json` 的 flow 文案保持一致
+- 已扩充测试覆盖
+  - `tests/test_home_assistant_component.py` 新增对 `load_client_lib()` 导入失败包装、`async_setup_entry()` 的 HAR 路径错误、`async_step_reconfigure()`、`SuningClimateEntity` 状态映射、`climate.async_setup_entry()` 与 `strings.json` 文案完整性的覆盖
+  - 当前测试总数提升到 `26`
+
+### Codebase Summary
+
+- `src/suning_biu_ha/`
+  - 项目的核心运行时客户端
+  - 负责苏宁短信登录、Cookie 持久化、HAR 签名模板复用、设备状态标准化与 CLI
+- `custom_components/suning_biu/`
+  - Home Assistant 自定义集成适配层
+  - 负责 config flow、config entry setup/unload、`DataUpdateCoordinator`、`climate` 实体与翻译资源
+- `tests/`
+  - 以纯 Python 单测为主
+  - 目前覆盖了加密、验证码桥接、登录客户端、Home Assistant 集成入口/flow/coordinator/entity
+- `README.md`
+  - 仓库级使用说明
+  - 包含 CLI 用法、Home Assistant 集成概览与当前已知边界
+
+### Verification
+
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run python -V`
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run python -m compileall custom_components/suning_biu src/suning_biu_ha tests`
+- `env UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/tmp/uv-suning-ha-check uv run --group dev --python 3.14 --with 'homeassistant==2026.3.2' python -m pytest -q`
+
+## Home Assistant Component Fixes
+
+### Plan
+
+- [x] 对照 Home Assistant 官方文档与当前代码，确认集成初始化、协调器与 `climate` 实体的兼容性问题
+- [x] 修复当前自定义集成中的运行期问题，优先处理认证失败传播与实体状态建模
+- [x] 补充针对自定义集成的最小测试或冒烟脚本，覆盖修复点
+- [x] 在目标 Home Assistant 版本上运行验证，回填结果与剩余风险
+
+### Notes
+
+- 当前仓库已有未提交的 `custom_components/suning_biu` 改动，本轮修复基于现状继续推进，不回滚既有修改
+- README 标注目标 Home Assistant 版本为 `2026.3.2`，该版本要求 Python `3.14`
+
+### Review
+
+- 已更新 `custom_components/suning_biu/__init__.py`
+  - `resolve_har_path()` 现在强制校验 HAR 文件真实存在
+  - 无效 HAR 路径在 entry setup 阶段改为 `ConfigEntryError`，提示用户走 reconfigure 修正
+  - setup 时显式传入 `config_entry` 给协调器，并继续保留运行时依赖延迟加载
+- 已更新 `custom_components/suning_biu/coordinator.py`
+  - 认证失败改为抛出 `ConfigEntryAuthFailed`
+  - 协调器显式绑定 `config_entry`，符合 Home Assistant 当前 `DataUpdateCoordinator` 用法
+- 已更新 `custom_components/suning_biu/config_flow.py`
+  - 新增 `reauth` / `reauth_confirm` 流程，认证失效后可直接重新短信登录
+  - 新增 `reconfigure` 流程，允许在 UI 内更新 HAR 文件路径
+  - 抽出 client 初始化、家庭选择 schema 与验证码桥接清理逻辑，减少重复分支
+- 已更新翻译与测试依赖
+  - 补充 `translations/en.json`、`translations/zh-Hans.json` 中的 `reauth_confirm` / `reconfigure` / 成功 abort 文案
+  - `pyproject.toml` 与 `uv.lock` 新增 `pytest-asyncio`
+- 已新增 `tests/test_home_assistant_component.py`
+  - 覆盖 HAR 路径存在性约束
+  - 覆盖协调器认证异常到 `ConfigEntryAuthFailed` 的传播
+  - 覆盖 `reauth` 分支在短信登录成功后会更新并重载既有 entry
+- 已完成验证
+  - `env UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/tmp/uv-suning-ha-check uv run --python 3.14 --with 'homeassistant==2026.3.2' python -m compileall custom_components/suning_biu src/suning_biu_ha tests`
+  - `env UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/tmp/uv-suning-ha-check uv run --group dev --python 3.14 --with 'homeassistant==2026.3.2' python -m pytest -q`
+  - `env UV_CACHE_DIR=/tmp/uv-cache uv run --python 3.14 --with 'homeassistant==2026.3.2' python - <<'PY' ... importlib.import_module(...) ... PY`
+
+### Risks
+
+- 当前仍依赖 HAR 中已有的已签名模板，`reauth` 只能恢复登录态，不能解决签名模板本身缺失或过期的问题
+- 目前只补了 `reauth` 与 `reconfigure`；若后续要支持账号切换、家庭切换，仍需要额外 flow 设计
+
 ## Plan
 
 - [x] 分析 HAR 中与手机验证码登录、SSO 跳转、Cookie 下发相关的关键请求与响应

@@ -2,25 +2,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.climate import ClimateEntity
+from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature
 from homeassistant.components.climate.const import HVACMode
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from suning_biu_ha import AirConditionerStatus
-
-from . import SuningRuntimeData
+from . import SuningConfigEntry, SuningRuntimeData
 from .const import CONF_FAMILY_ID, DOMAIN
 from .coordinator import SuningDataUpdateCoordinator
 
 
 async def async_setup_entry(
   hass: HomeAssistant,
-  entry: ConfigEntry,
+  entry: SuningConfigEntry,
   async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
   runtime_data: SuningRuntimeData = entry.runtime_data
@@ -39,13 +36,14 @@ class SuningClimateEntity(CoordinatorEntity[SuningDataUpdateCoordinator], Climat
   _attr_translation_key = "suning_air_conditioner"
   _attr_temperature_unit = UnitOfTemperature.CELSIUS
   _attr_target_temperature_step = 1.0
+  _attr_supported_features = ClimateEntityFeature(0)
   _enable_turn_on_off_backwards_compatibility = False
 
   def __init__(
     self,
     *,
     coordinator: SuningDataUpdateCoordinator,
-    entry: ConfigEntry,
+    entry: SuningConfigEntry,
     device_id: str,
   ) -> None:
     super().__init__(coordinator)
@@ -54,7 +52,7 @@ class SuningClimateEntity(CoordinatorEntity[SuningDataUpdateCoordinator], Climat
     self._attr_unique_id = f"{entry.entry_id}_{device_id}"
 
   @property
-  def _status(self) -> AirConditionerStatus:
+  def _status(self) -> Any:
     return self.coordinator.status_for(self._device_id)
 
   @property
@@ -96,27 +94,6 @@ class SuningClimateEntity(CoordinatorEntity[SuningDataUpdateCoordinator], Climat
   @property
   def target_temperature(self) -> float | None:
     return self._status.target_temperature
-
-  @property
-  def fan_mode(self) -> str | None:
-    preview = self._status.ha_climate_preview
-    if preview is None:
-      return None
-    return preview.fan_mode
-
-  @property
-  def swing_mode(self) -> str | None:
-    preview = self._status.ha_climate_preview
-    if preview is None:
-      return None
-    return preview.swing_mode
-
-  @property
-  def preset_mode(self) -> str | None:
-    preview = self._status.ha_climate_preview
-    if preview is None:
-      return None
-    return preview.preset_mode
 
   @property
   def extra_state_attributes(self) -> dict[str, Any]:

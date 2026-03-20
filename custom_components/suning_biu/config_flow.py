@@ -1,18 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import partial
 from typing import Any
 
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
 
-from suning_biu_ha import CaptchaRequiredError, CaptchaSolution, FamilyInfo, SuningError, SuningSmartHomeClient
-from suning_biu_ha.captcha_bridge import LocalCaptchaBridge
-
 from . import resolve_har_path, session_state_path
+from .client_lib import SuningDependencyError, load_client_lib
 from .const import (
   CONF_FAMILY_ID,
   CONF_FAMILY_NAME,
@@ -33,12 +32,12 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     self._phone_number: str | None = None
     self._international_code: str = DEFAULT_INTERNATIONAL_CODE
     self._har_path: str | None = None
-    self._client: SuningSmartHomeClient | None = None
-    self._families: list[FamilyInfo] = []
+    self._client: object | None = None
+    self._families: list[Any] = []
     self._captcha_kind: str | None = None
-    self._captcha_bridge: LocalCaptchaBridge | None = None
+    self._captcha_bridge: object | None = None
 
-  async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+  async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
     errors: dict[str, str] = {}
 
     if user_input is not None:
@@ -48,23 +47,14 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       await self.async_set_unique_id(f"{self._international_code}:{self._phone_number}")
       self._abort_if_unique_id_configured()
 
-      try:
-        resolved_har_path = resolve_har_path(self.hass, self._har_path)
-      except ValueError:
-        errors["base"] = "har_not_found"
-      else:
-        self._client = SuningSmartHomeClient(
-          state_path=session_state_path(
-            self.hass,
-            self._international_code,
-            self._phone_number,
-          ),
-          har_path=resolved_har_path,
-        )
+      client_lib, error_key = self._initialize_client()
+      if error_key is None and client_lib is not None:
         try:
           return await self._async_send_sms()
-        except SuningError:
+        except client_lib.SuningError:
           errors["base"] = "cannot_connect"
+      elif error_key is not None:
+        errors["base"] = error_key
 
     return self.async_show_form(
       step_id="user",
@@ -78,7 +68,77 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       errors=errors,
     )
 
-  async def async_step_captcha(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+  async def async_step_reauth(
+    self,
+    entry_data: Mapping[str, Any],
+  ) -> ConfigFlowResult:
+    reauth_entry = self._get_reauth_entry()
+    self._phone_number = str(entry_data.get(CONF_PHONE_NUMBER, reauth_entry.data[CONF_PHONE_NUMBER]))
+    self._international_code = str(
+      entry_data.get(
+        CONF_INTERNATIONAL_CODE,
+        reauth_entry.data[CONF_INTERNATIONAL_CODE],
+      )
+    )
+    self._har_path = str(entry_data.get(CONF_HAR_PATH, reauth_entry.data[CONF_HAR_PATH]))
+    return await self.async_step_reauth_confirm()
+
+  async def async_step_reauth_confirm(
+    self,
+    user_input: dict[str, Any] | None = None,
+  ) -> ConfigFlowResult:
+    errors: dict[str, str] = {}
+
+    if user_input is not None:
+      client_lib, error_key = self._initialize_client()
+      if error_key is None and client_lib is not None:
+        try:
+          return await self._async_send_sms()
+        except client_lib.SuningError:
+          errors["base"] = "cannot_connect"
+      elif error_key is not None:
+        errors["base"] = error_key
+
+    return self.async_show_form(
+      step_id="reauth_confirm",
+      data_schema=vol.Schema({}),
+      description_placeholders={"phone_number": self._phone_number or ""},
+      errors=errors,
+    )
+
+  async def async_step_reconfigure(
+    self,
+    user_input: dict[str, Any] | None = None,
+  ) -> ConfigFlowResult:
+    errors: dict[str, str] = {}
+    reconfigure_entry = self._get_reconfigure_entry()
+
+    if user_input is not None:
+      har_path = user_input[CONF_HAR_PATH].strip()
+      try:
+        resolve_har_path(self.hass, har_path)
+      except ValueError:
+        errors["base"] = "har_not_found"
+      else:
+        return self.async_update_reload_and_abort(
+          reconfigure_entry,
+          data_updates={CONF_HAR_PATH: har_path},
+        )
+
+    return self.async_show_form(
+      step_id="reconfigure",
+      data_schema=self.add_suggested_values_to_schema(
+        vol.Schema({vol.Required(CONF_HAR_PATH): str}),
+        {CONF_HAR_PATH: reconfigure_entry.data[CONF_HAR_PATH]},
+      ),
+      description_placeholders={
+        "phone_number": str(reconfigure_entry.data[CONF_PHONE_NUMBER]),
+        "family_name": str(reconfigure_entry.data.get(CONF_FAMILY_NAME, "")),
+      },
+      errors=errors,
+    )
+
+  async def async_step_captcha(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
     errors: dict[str, str] = {}
     description_placeholders: dict[str, str] = {}
 
@@ -86,12 +146,13 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       description_placeholders["captcha_url"] = self._captcha_bridge.url
 
     if user_input is not None:
+      client_lib = load_client_lib()
       try:
         captcha = await self._async_resolve_captcha(user_input)
         return await self._async_send_sms(captcha)
       except TimeoutError:
         errors["base"] = "captcha_not_ready"
-      except SuningError:
+      except client_lib.SuningError:
         errors["base"] = "cannot_connect"
 
     schema: vol.Schema
@@ -111,10 +172,11 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       description_placeholders=description_placeholders,
     )
 
-  async def async_step_sms_code(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+  async def async_step_sms_code(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
     errors: dict[str, str] = {}
 
     if user_input is not None and self._client is not None and self._phone_number is not None:
+      client_lib = load_client_lib()
       try:
         await self.hass.async_add_executor_job(
           partial(
@@ -124,10 +186,17 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             international_code=self._international_code,
           )
         )
-        self._families = await self.hass.async_add_executor_job(self._client.list_family_infos)
-        return await self.async_step_family()
-      except SuningError:
+      except client_lib.SuningError:
         errors["base"] = "invalid_auth"
+      else:
+        try:
+          if self.source == config_entries.SOURCE_REAUTH:
+            await self.hass.async_add_executor_job(self._client.keep_alive)
+            return self.async_update_reload_and_abort(self._get_reauth_entry())
+          self._families = await self.hass.async_add_executor_job(self._client.list_family_infos)
+          return await self.async_step_family()
+        except client_lib.SuningError:
+          errors["base"] = "cannot_connect"
 
     return self.async_show_form(
       step_id="sms_code",
@@ -135,17 +204,18 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       errors=errors,
     )
 
-  async def async_step_family(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+  async def async_step_family(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
     errors: dict[str, str] = {}
 
     if user_input is not None and self._client is not None and self._phone_number is not None:
       family_id = user_input[CONF_FAMILY_ID]
+      client_lib = load_client_lib()
       try:
         statuses = await self.hass.async_add_executor_job(
           self._client.list_air_conditioner_statuses,
           family_id,
         )
-      except SuningError:
+      except client_lib.SuningError:
         errors["base"] = "cannot_connect"
       else:
         if not statuses:
@@ -156,23 +226,11 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors["base"] = "cannot_connect"
             return self.async_show_form(
               step_id="family",
-              data_schema=vol.Schema(
-                {
-                  vol.Required(CONF_FAMILY_ID): SelectSelector(
-                    SelectSelectorConfig(
-                      options=[
-                        {"value": item.family_id, "label": item.name}
-                        for item in self._families
-                      ],
-                      mode=SelectSelectorMode.DROPDOWN,
-                    )
-                  )
-                }
-              ),
+              data_schema=self._family_schema(),
               errors=errors,
             )
           return self.async_create_entry(
-            title=f"{self._phone_number} - {family.name}",
+            title=self._entry_title(family.name),
             data={
               CONF_PHONE_NUMBER: self._phone_number,
               CONF_INTERNATIONAL_CODE: self._international_code,
@@ -184,28 +242,17 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     return self.async_show_form(
       step_id="family",
-      data_schema=vol.Schema(
-        {
-          vol.Required(CONF_FAMILY_ID): SelectSelector(
-            SelectSelectorConfig(
-              options=[
-                {"value": family.family_id, "label": family.name}
-                for family in self._families
-              ],
-              mode=SelectSelectorMode.DROPDOWN,
-            )
-          )
-        }
-      ),
+      data_schema=self._family_schema(),
       errors=errors,
     )
 
   async def _async_send_sms(
     self,
-    captcha: CaptchaSolution | None = None,
-  ) -> FlowResult:
+    captcha: Any | None = None,
+  ) -> ConfigFlowResult:
+    client_lib = load_client_lib()
     if self._client is None or self._phone_number is None:
-      raise SuningError("config flow client is not initialized")
+      raise client_lib.SuningError("config flow client is not initialized")
     try:
       await self.hass.async_add_executor_job(
         partial(
@@ -215,39 +262,88 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
           captcha=captcha,
         )
       )
-    except CaptchaRequiredError as error:
+    except client_lib.CaptchaRequiredError as error:
       self._captcha_kind = {
         "isIarVerifyCode": "iar",
         "isSlideVerifyCode": "slide",
         "isImgVerifyCode": "image",
       }.get(error.risk_type)
       if self._captcha_kind == "iar":
+        self._close_captcha_bridge()
         ticket = await self.hass.async_add_executor_job(
           self._client.request_iar_verify_code_ticket,
           self._phone_number,
         )
-        self._captcha_bridge = LocalCaptchaBridge(ticket=ticket)
+        self._captcha_bridge = client_lib.LocalCaptchaBridge(ticket=ticket)
         self._captcha_bridge.start()
       elif self._captcha_kind is None:
-        raise SuningError(f"unsupported captcha risk type: {error.risk_type}") from error
+        raise client_lib.SuningError(f"unsupported captcha risk type: {error.risk_type}") from error
       return await self.async_step_captcha()
     return await self.async_step_sms_code()
 
-  async def _async_resolve_captcha(self, user_input: dict[str, Any]) -> CaptchaSolution:
+  async def _async_resolve_captcha(self, user_input: dict[str, Any]) -> Any:
+    client_lib = load_client_lib()
     if self._captcha_kind == "iar":
       if self._captcha_bridge is None:
-        raise SuningError("IAR captcha bridge is not initialized")
+        raise client_lib.SuningError("IAR captcha bridge is not initialized")
       try:
         result = await self.hass.async_add_executor_job(
           self._captcha_bridge.wait_for_token,
           CAPTCHA_POLL_TIMEOUT,
         )
       finally:
-        self._captcha_bridge.close()
-        self._captcha_bridge = None
-      return CaptchaSolution(kind="iar", value=result.token)
+        self._close_captcha_bridge()
+      return client_lib.CaptchaSolution(kind="iar", value=result.token)
 
-    return CaptchaSolution(
+    return client_lib.CaptchaSolution(
       kind=self._captcha_kind or "image",
       value=user_input["captcha_value"].strip(),
     )
+
+  def _initialize_client(self) -> tuple[Any | None, str | None]:
+    try:
+      client_lib = load_client_lib()
+    except SuningDependencyError:
+      return None, "dependency_not_ready"
+
+    if self._phone_number is None or self._har_path is None:
+      return client_lib, "cannot_connect"
+
+    try:
+      resolved_har_path = resolve_har_path(self.hass, self._har_path)
+    except ValueError:
+      return client_lib, "har_not_found"
+
+    self._client = client_lib.SuningSmartHomeClient(
+      state_path=session_state_path(
+        self.hass,
+        self._international_code,
+        self._phone_number,
+      ),
+      har_path=resolved_har_path,
+    )
+    return client_lib, None
+
+  def _family_schema(self) -> vol.Schema:
+    return vol.Schema(
+      {
+        vol.Required(CONF_FAMILY_ID): SelectSelector(
+          SelectSelectorConfig(
+            options=[
+              {"value": family.family_id, "label": family.name}
+              for family in self._families
+            ],
+            mode=SelectSelectorMode.DROPDOWN,
+          )
+        )
+      }
+    )
+
+  def _entry_title(self, family_name: str) -> str:
+    return f"{self._phone_number} - {family_name}"
+
+  def _close_captcha_bridge(self) -> None:
+    if self._captcha_bridge is None:
+      return
+    self._captcha_bridge.close()
+    self._captcha_bridge = None
