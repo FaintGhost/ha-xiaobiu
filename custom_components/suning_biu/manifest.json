@@ -13,7 +13,7 @@
     "suning_biu_ha"
   ],
   "requirements": [
-    "suning-biu-ha @ git+https://github.com/FaintGhost/ha-suning.git@main"
+    "suning-biu-ha @ git+https://github.com/FaintGhost/ha-suning.git@070a9f17706c6a278c5031d2376c13262c239779"
   ],
   "version": "0.1.0"
 }

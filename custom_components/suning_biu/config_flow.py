@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from functools import partial
-from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
@@ -13,7 +12,7 @@ from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig,
 from suning_biu_ha import CaptchaRequiredError, CaptchaSolution, FamilyInfo, SuningError, SuningSmartHomeClient
 from suning_biu_ha.captcha_bridge import LocalCaptchaBridge
 
-from . import session_state_path
+from . import resolve_har_path, session_state_path
 from .const import (
   CONF_FAMILY_ID,
   CONF_FAMILY_NAME,
@@ -23,6 +22,8 @@ from .const import (
   DEFAULT_INTERNATIONAL_CODE,
   DOMAIN,
 )
+
+CAPTCHA_POLL_TIMEOUT = 0.1
 
 
 class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -47,7 +48,9 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       await self.async_set_unique_id(f"{self._international_code}:{self._phone_number}")
       self._abort_if_unique_id_configured()
 
-      if not Path(self._har_path).is_file():
+      try:
+        resolved_har_path = resolve_har_path(self.hass, self._har_path)
+      except ValueError:
         errors["base"] = "har_not_found"
       else:
         self._client = SuningSmartHomeClient(
@@ -56,7 +59,7 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._international_code,
             self._phone_number,
           ),
-          har_path=self._har_path,
+          har_path=resolved_har_path,
         )
         try:
           return await self._async_send_sms()
@@ -148,7 +151,26 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not statuses:
           errors["base"] = "no_supported_devices"
         else:
-          family = next(item for item in self._families if item.family_id == family_id)
+          family = next((item for item in self._families if item.family_id == family_id), None)
+          if family is None:
+            errors["base"] = "cannot_connect"
+            return self.async_show_form(
+              step_id="family",
+              data_schema=vol.Schema(
+                {
+                  vol.Required(CONF_FAMILY_ID): SelectSelector(
+                    SelectSelectorConfig(
+                      options=[
+                        {"value": item.family_id, "label": item.name}
+                        for item in self._families
+                      ],
+                      mode=SelectSelectorMode.DROPDOWN,
+                    )
+                  )
+                }
+              ),
+              errors=errors,
+            )
           return self.async_create_entry(
             title=f"{self._phone_number} - {family.name}",
             data={
@@ -218,7 +240,7 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       try:
         result = await self.hass.async_add_executor_job(
           self._captcha_bridge.wait_for_token,
-          0.1,
+          CAPTCHA_POLL_TIMEOUT,
         )
       finally:
         self._captcha_bridge.close()

@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect Suning Biu",
-        "description": "Enter the mobile number used for Suning SMS login and the HAR file path that contains the signed family/device requests.",
+        "description": "Enter the mobile number used for Suning SMS login and the HAR file path under the Home Assistant config directory that contains the signed family/device requests.",
         "data": {
           "phone_number": "Phone number",
           "international_code": "International code",
@@ -35,7 +35,7 @@
     "error": {
       "cannot_connect": "Failed to connect to Suning.",
       "invalid_auth": "The SMS code is invalid or expired.",
-      "har_not_found": "The HAR file path does not exist.",
+      "har_not_found": "The HAR file must exist inside the Home Assistant config directory and use the .har extension.",
       "captcha_not_ready": "Captcha has not been completed yet.",
       "no_supported_devices": "No supported air conditioner devices were found in the selected family."
     },

@@ -40,6 +40,8 @@ FAMILY_LIST_URL = "https://itapig.suning.com/api/trade/shcss/queryAllFamily"
 DEVICE_LIST_URL = "https://itapig.suning.com/api/trade/shcss/all"
 OPENSH_GET_KEY_URL = "https://opensh.suning.com/shsys-web/cc/api/v3/getKey"
 SUCCESS_RESPONSE_CODES = {"0", "SUCCESS"}
+AIR_CONDITIONER_CATEGORY_ID = "0002"
+AIR_CONDITIONER_NAME_KEYWORD = "空调"
 SERVICE_BOOTSTRAP_URLS = {
   "shcss": MEMBER_BASE_INFO_URL,
   "itapig": "http://itapig.suning.com/api/trade/shcss/queryAllFamily",
@@ -645,7 +647,8 @@ class SuningSmartHomeClient:
 
     climate_candidates = [
       device for device in devices
-      if str(device.get("categoryId")) == "0002" or "空调" in str(device.get("name", ""))
+      if str(device.get("categoryId")) == AIR_CONDITIONER_CATEGORY_ID
+      or AIR_CONDITIONER_NAME_KEYWORD in str(device.get("name", ""))
     ]
     if len(climate_candidates) == 1:
       return climate_candidates[0]
@@ -735,7 +738,9 @@ class SuningSmartHomeClient:
     )
 
   def _is_air_conditioner_device(self, device: dict[str, Any]) -> bool:
-    return str(device.get("categoryId")) == "0002" or "空调" in str(device.get("name", ""))
+    return str(device.get("categoryId")) == AIR_CONDITIONER_CATEGORY_ID or (
+      AIR_CONDITIONER_NAME_KEYWORD in str(device.get("name", ""))
+    )
 
   def _build_ha_climate_preview(self, status: AirConditionerStatus) -> HAClimatePreview:
     notes: list[str] = []

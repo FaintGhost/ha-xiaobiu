@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import logging
+
+import requests
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -19,8 +20,6 @@ from .const import (
   DOMAIN,
 )
 from .coordinator import SuningDataUpdateCoordinator
-
-_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: tuple[Platform, ...] = (Platform.CLIMATE,)
 
@@ -44,12 +43,31 @@ def session_state_path(
   )
 
 
+def resolve_har_path(hass: HomeAssistant, har_path: str) -> Path:
+  candidate = Path(har_path)
+  if not candidate.is_absolute():
+    candidate = Path(hass.config.path(har_path))
+  resolved_path = candidate.resolve()
+  config_dir = Path(hass.config.config_dir).resolve()
+  try:
+    resolved_path.relative_to(config_dir)
+  except ValueError as error:
+    raise ValueError("HAR file must be inside the Home Assistant config directory") from error
+  if resolved_path.suffix.lower() != ".har":
+    raise ValueError("HAR path must point to a .har file")
+  return resolved_path
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
   phone_number = entry.data[CONF_PHONE_NUMBER]
   international_code = entry.data[CONF_INTERNATIONAL_CODE]
+  try:
+    har_path = resolve_har_path(hass, entry.data[CONF_HAR_PATH])
+  except ValueError as error:
+    raise ConfigEntryNotReady(str(error)) from error
   client = SuningSmartHomeClient(
     state_path=session_state_path(hass, international_code, phone_number),
-    har_path=entry.data[CONF_HAR_PATH],
+    har_path=har_path,
   )
   client.state.phone_number = phone_number
   client.state.international_code = international_code
@@ -63,10 +81,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
   except AuthenticationError as error:
     raise ConfigEntryAuthFailed(str(error)) from error
-  except SuningError as error:
-    raise ConfigEntryNotReady(str(error)) from error
-  except Exception as error:  # noqa: BLE001
-    _LOGGER.exception("Unexpected error while setting up Suning Biu")
+  except (SuningError, requests.RequestException) as error:
     raise ConfigEntryNotReady(str(error)) from error
 
   entry.runtime_data = SuningRuntimeData(client=client, coordinator=coordinator)
@@ -76,6 +91,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
   unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-  if unload_ok:
-    entry.runtime_data = None
-  return unload_ok
+  if not unload_ok:
+    return False
+  del entry.runtime_data
+  return True

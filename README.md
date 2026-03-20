@@ -11,7 +11,7 @@ This repository now also includes a Home Assistant custom integration at `custom
 - Config flow inputs:
   - phone number
   - international code
-  - HAR file path containing the signed `queryAllFamily` / device list app requests
+  - HAR file path under the Home Assistant config directory containing the signed `queryAllFamily` / device list app requests
 - Login flow:
   - the integration sends the SMS code through Suning's current login flow
   - if Suning requires IAR verification, the config flow shows a local bridge URL for the puzzle page
