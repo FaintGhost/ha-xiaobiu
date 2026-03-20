@@ -19,3 +19,5 @@
 - 逆向 live app API 时，不能把返回字段名想当然写死在 parser 里；像家庭列表这种接口，线上可能返回 `id` 而不是 `familyId`。一旦 parser 把成功响应误判成格式错误，HA 里就只会表现成模糊的 `cannot_connect`
 - Home Assistant external step 的能力 URL 不能在“恢复后的工作真正完成之前”就提前销毁；否则一旦 `captcha_done` 之类的恢复步骤里抛异常，用户会先看到 flow 500，再看到旧 external-step URL 退化成 `captcha session not found`
 - 当 IAR external step 依赖浏览器生成的 `detect/dfpToken` 时，不能在打开验证码页之前就提前向服务端申请 ticket；否则 ticket 会绑定占位风控上下文，问题只会在用户完成拼图后才暴露成 `cannot_connect`。应先把浏览器风控上下文送回 HA，再由 HA 申请本轮 ticket
+- 仅凭 HA 前端 HAR 看到“external step 成功回调后 `cannot_connect`”还不够定位根因；如果还没有拿到 HA 后端日志里的真实业务错误，不能把某个时序推断直接当成根因去提交。先暴露底层异常，再决定是否改协议时序
+- 如果 HA 后端日志已经明确暴露出具体业务错误，并且和之前基于 HAR 的时序推断相冲突，不要继续在旧推断上叠补丁；优先回滚到最近一次用户真实验证通过的实现，再用回归测试锁定最小回滚边界

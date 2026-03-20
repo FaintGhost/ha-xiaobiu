@@ -17,6 +17,8 @@ def test_local_captcha_bridge_serves_ticket_and_accepts_callback() -> None:
     assert "align-items: flex-start" in html
     assert "computeCaptchaSize" in html
     assert "window.__RISK_CONTEXT_SCRIPT_URLS__" in html
+    assert "window.__CAPTCHA_PREPARE_URL__" not in html
+    assert "window.__CAPTCHA_INITIAL_TICKET__" not in html
     assert "mmds.suning.com/mmds/mmds.js" in html
     assert "未能采集浏览器风控上下文" in html
     assert "captchaSubmitStarted" in html

@@ -1,5 +1,23 @@
 # 苏宁小 biu 智家短信登录接入任务
 
+## HA IAR SMS Regression Reassessment
+
+### Plan
+
+- [ ] 对照最新 HA 日志、`1b72b07` 与 `dbd5806` 的差异，确认 regression 是否只来自 IAR ticket 延后申请
+- [ ] 基于当前证据整理 2-3 个可执行方案，并明确推荐路径
+- [ ] 等用户确认后，再进入新的实现计划
+
+### Notes
+
+- 用户现在提供了 HA 真实日志，失败点已经从泛化的 `cannot_connect` 收敛为：
+  - `send_sms_code()` 抛 `SuningError: 验证码发送失败，请稍后重试(00201)`
+- 这说明 `ha6.har` 当时只能证明 external step 恢复后 `_async_send_sms(captcha)` 失败，不能单独证明 “IAR ticket 申请时机错误” 就是根因
+- `dbd5806..1b72b07` 在 HA IAR 相关链路上的核心行为差异只有一处：
+  - `dbd5806`：捕获 `isIarVerifyCode` 后立刻 `request_iar_verify_code_ticket()`
+  - `1b72b07`：把 ticket 申请延后到浏览器 `prepare` 阶段
+- 既然用户明确反馈“之前至少能发出短信，这次改完直接在 IAR 之后报 00201”，当前最应该优先验证的是：`1b72b07` 是否确实把原本可工作的 ticket 申请时序打回去了
+
 ## HA Post-IAR Cannot Connect Investigation
 
 ### Plan
@@ -746,3 +764,52 @@
 
 - 当前只能通过 HAR 和单测确认“请求形态”已经对齐；由于实时 IAR 拼图需要人工参与，本轮未能在自动化里完整跑通一次真实短信发送
 - `00852` 等非大陆区号目前仍保留旧网页登录参数分支，后续若要全面移动端化，需要单独抓样本确认
+
+## HA IAR Regression Rollback Execution
+
+### Plan
+
+- [x] 先把 `config_flow` 的 IAR ticket 行为改回 eager-ticket，并用测试确认 session 创建时已携带 ticket
+- [x] 再把 HA external-step 与 bridge 页改回 single-stage 协议，删除 `prepare/complete` 双阶段分支
+- [x] 保留 `captcha_done` 恢复失败日志和 unsupported `risk_type` 错误日志，并补充回归测试
+- [x] 运行 HA component tests、runtime tests、`compileall` 和副本一致性检查
+
+### Notes
+
+- 最新 HA 后端日志已经把失败点收敛到 `send_sms_code()` 抛 `SuningError: 验证码发送失败，请稍后重试(00201)`，这和之前仅凭 HAR 推导出的 deferred-ticket 根因判断相冲突
+- 因此本轮采用“回滚到用户验证过的 eager-ticket / single-stage 实现，只保留日志增强”的最小风险策略，而不是继续在 deferred-ticket 协议上打补丁
+
+### Review
+
+- 已更新 `custom_components/suning_biu/config_flow.py`
+  - 捕获 `isIarVerifyCode` 后恢复为立即申请 IAR ticket
+  - 创建 HA IAR session 时重新直接注入 `ticket`
+  - 保留 `async_step_captcha_done()` 的恢复失败异常日志
+  - 保留 unsupported `risk_type` 的错误日志
+- 已更新 `custom_components/suning_biu/iar_external_view.py`
+  - 删除 deferred-ticket 所需的 `client` / `phone_number` / `prepared_*` 状态
+  - 删除 `prepare` 阶段和 `action=complete` 协议
+  - 恢复为 GET 直接渲染已有 ticket，POST 一次性接收 `token + detect + dfpToken`
+  - 保留 `resume_requested` 幂等保护和缺少风险上下文时的 `400`
+- 已更新 `src/suning_biu_ha/captcha_bridge.py` 与 vendored 副本
+  - 删除 `__CAPTCHA_PREPARE_URL__` / `__CAPTCHA_INITIAL_TICKET__`
+  - 恢复直接 `SnCaptcha.init(ticket=...)`
+  - 回调只提交一次结果，不再发送 `action`
+- 已更新测试
+  - `tests/test_home_assistant_component.py` 改回 eager-ticket 与 single-stage external-step 断言
+  - 删除只对 deferred-ticket 成立的 `complete before prepare` 用例
+  - 新增恢复失败日志与 unsupported `risk_type` 日志断言
+  - `tests/test_captcha_bridge.py` 断言 bridge 页不再暴露 deferred-ticket 变量
+
+### Verification
+
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run python -m pytest tests/test_captcha_bridge.py -q`
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run python -m pytest tests/test_client.py -q`
+- `env UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/tmp/uv-suning-ha-check uv run --group dev --python 3.14 --with 'homeassistant==2026.3.2' python -m pytest tests/test_home_assistant_component.py -q`
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run python -m compileall custom_components/suning_biu src/suning_biu_ha tests`
+- `diff -u src/suning_biu_ha/captcha_bridge.py custom_components/suning_biu/suning_biu_ha/captcha_bridge.py`
+
+### Risks
+
+- 自动化已覆盖当前回滚边界，但真实有效性仍需要你在 Home Assistant 中重新手工走一遍 IAR -> 短信发送 -> 提交验证码
+- 如果手工回归后仍出现 `00201`，下一步应直接以 HA 后端日志为主线继续定位，而不是重新引入 deferred-ticket 时序

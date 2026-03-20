@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from secrets import token_urlsafe
-from typing import Any
 
 from aiohttp import web
 
@@ -19,7 +17,6 @@ from .suning_biu_ha.captcha_bridge import (
 
 DATA_IAR_CAPTCHA_SESSIONS = f"{DOMAIN}_iar_captcha_sessions"
 DATA_IAR_CAPTCHA_VIEW_REGISTERED = f"{DOMAIN}_iar_captcha_view_registered"
-_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -33,15 +30,11 @@ class IARCaptchaResult:
 class IARCaptchaSession:
   flow_id: str
   nonce: str
-  ticket: str | None = None
+  ticket: str
   script_urls: list[str] = field(
     default_factory=lambda: list(DEFAULT_RISK_CONTEXT_SCRIPT_URLS)
   )
   env: str = "prd"
-  client: Any | None = None
-  phone_number: str | None = None
-  prepared_detect: str | None = None
-  prepared_dfp_token: str | None = None
   result: IARCaptchaResult | None = None
   resume_requested: bool = False
 
@@ -65,11 +58,9 @@ def async_create_iar_captcha_session(
   hass: HomeAssistant,
   *,
   flow_id: str,
-  ticket: str | None = None,
+  ticket: str,
   script_urls: list[str] | None = None,
   env: str = "prd",
-  client: Any | None = None,
-  phone_number: str | None = None,
 ) -> IARCaptchaSession:
   async_ensure_iar_captcha_view_registered(hass)
   session = IARCaptchaSession(
@@ -78,8 +69,6 @@ def async_create_iar_captcha_session(
     ticket=ticket,
     script_urls=list(script_urls or DEFAULT_RISK_CONTEXT_SCRIPT_URLS),
     env=env,
-    client=client,
-    phone_number=phone_number,
   )
   _sessions(hass)[flow_id] = session
   return session
@@ -122,31 +111,6 @@ class SuningIARCaptchaView(HomeAssistantView):
       return None
     return session
 
-  async def _async_prepare_ticket(
-    self,
-    hass: HomeAssistant,
-    session: IARCaptchaSession,
-    *,
-    detect: str,
-    dfp_token: str,
-  ) -> str:
-    if session.ticket and session.prepared_detect == detect and session.prepared_dfp_token == dfp_token:
-      return session.ticket
-    if session.client is None or session.phone_number is None:
-      raise RuntimeError("captcha session is not ready for ticket preparation")
-    session.client.update_risk_context(
-      detect=detect,
-      dfp_token=dfp_token,
-    )
-    ticket = await hass.async_add_executor_job(
-      session.client.request_iar_verify_code_ticket,
-      session.phone_number,
-    )
-    session.ticket = ticket
-    session.prepared_detect = detect
-    session.prepared_dfp_token = dfp_token
-    return ticket
-
   async def get(
     self,
     request: web.Request,
@@ -162,7 +126,6 @@ class SuningIARCaptchaView(HomeAssistantView):
       env=session.env,
       script_urls=session.script_urls,
       callback_url=session.path,
-      prepare_url=session.path,
     )
     return web.Response(text=body, content_type="text/html")
 
@@ -181,32 +144,12 @@ class SuningIARCaptchaView(HomeAssistantView):
     except ValueError:
       return self.json_message("invalid JSON", HTTPStatus.BAD_REQUEST)
     token = (payload.get("token") or "").strip()
-    action = str(payload.get("action") or "").strip().lower()
     detect = (payload.get("detect") or "").strip()
     dfp_token = (payload.get("dfpToken") or "").strip()
-    if not detect or not dfp_token:
-      return self.json_message("missing risk context", HTTPStatus.BAD_REQUEST)
-    if action == "prepare":
-      try:
-        ticket = await self._async_prepare_ticket(
-          hass,
-          session,
-          detect=detect,
-          dfp_token=dfp_token,
-        )
-      except Exception:
-        _LOGGER.exception(
-          "Failed to prepare IAR captcha ticket for flow %s",
-          flow_id,
-        )
-        return self.json_message("captcha preparation failed", HTTPStatus.BAD_GATEWAY)
-      return self.json({"ok": True, "ticket": ticket})
-    if action and action != "complete":
-      return self.json_message("invalid action", HTTPStatus.BAD_REQUEST)
     if not token:
       return self.json_message("missing token", HTTPStatus.BAD_REQUEST)
-    if not session.ticket:
-      return self.json_message("captcha not prepared", HTTPStatus.CONFLICT)
+    if not detect or not dfp_token:
+      return self.json_message("missing risk context", HTTPStatus.BAD_REQUEST)
     if session.resume_requested:
       return self.json({"ok": True, "duplicate": True})
     session.result = IARCaptchaResult(

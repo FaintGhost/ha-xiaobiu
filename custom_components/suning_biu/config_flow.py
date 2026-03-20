@@ -262,11 +262,14 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       }.get(error.risk_type)
       if self._captcha_kind == "iar":
         self._clear_iar_captcha_session()
+        ticket = await self.hass.async_add_executor_job(
+          self._client.request_iar_verify_code_ticket,
+          self._phone_number,
+        )
         async_create_iar_captcha_session(
           self.hass,
           flow_id=self.flow_id,
-          client=self._client,
-          phone_number=self._phone_number,
+          ticket=ticket,
           script_urls=getattr(self._client, "risk_context_script_urls", None) or None,
         )
       elif self._captcha_kind is None:

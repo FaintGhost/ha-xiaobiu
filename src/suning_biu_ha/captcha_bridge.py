@@ -24,8 +24,6 @@ HTML_TEMPLATE = """<!doctype html>
   <script>
     window.__RISK_CONTEXT_SCRIPT_URLS__ = {script_urls_json};
     window.__CAPTCHA_CALLBACK_URL__ = {callback_url_json};
-    window.__CAPTCHA_PREPARE_URL__ = {prepare_url_json};
-    window.__CAPTCHA_INITIAL_TICKET__ = {initial_ticket_json};
   </script>
   <style>
     * {{
@@ -115,8 +113,6 @@ HTML_TEMPLATE = """<!doctype html>
     const cardEl = document.querySelector(".card");
     const riskContextScripts = window.__RISK_CONTEXT_SCRIPT_URLS__ || [];
     const callbackUrl = window.__CAPTCHA_CALLBACK_URL__ || "/callback";
-    const prepareUrl = window.__CAPTCHA_PREPARE_URL__ || "";
-    const initialTicket = window.__CAPTCHA_INITIAL_TICKET__ || "";
     async function loadScript(src) {{
       await new Promise((resolve, reject) => {{
         const script = document.createElement("script");
@@ -131,31 +127,6 @@ HTML_TEMPLATE = """<!doctype html>
     }}
     async function sleep(ms) {{
       await new Promise((resolve) => window.setTimeout(resolve, ms));
-    }}
-    async function postJson(url, payload) {{
-      const response = await fetch(url, {{
-        method: "POST",
-        headers: {{
-          "Content-Type": "application/json"
-        }},
-        body: JSON.stringify(payload)
-      }});
-      const responseText = await response.text();
-      let responseData = null;
-      if (responseText) {{
-        try {{
-          responseData = JSON.parse(responseText);
-        }} catch (_error) {{
-          responseData = null;
-        }}
-      }}
-      if (!response.ok) {{
-        const message = responseData && responseData.message
-          ? responseData.message
-          : ("HTTP " + response.status);
-        throw new Error(message);
-      }}
-      return responseData || {{}};
     }}
     function readRiskContextOnce() {{
       let detect = "";
@@ -205,80 +176,57 @@ HTML_TEMPLATE = """<!doctype html>
       statusEl.textContent = message;
       statusEl.className = "status" + (klass ? " " + klass : "");
     }}
-    async function prepareCaptchaTicket(riskContext) {{
-      if (initialTicket) {{
-        return initialTicket;
-      }}
-      if (!prepareUrl) {{
-        throw new Error("验证码初始化地址缺失。");
-      }}
-      const payload = await postJson(prepareUrl, {{
-        action: "prepare",
-        detect: riskContext.detect,
-        dfpToken: riskContext.dfpToken
-      }});
-      if (!payload.ticket) {{
-        throw new Error("验证码初始化失败，服务端没有返回 ticket。");
-      }}
-      return payload.ticket;
-    }}
-    function initCaptcha(ticket, riskContextPromise) {{
-      SnCaptcha.init({{
-        env: "{env}",
-        target: "captcha",
-        ticket,
-        client: "app",
-        width: captchaSize.width,
-        height: captchaSize.height,
-        callback: async function(token) {{
-          if (captchaSubmitStarted) {{
-            return;
-          }}
-          captchaSubmitStarted = true;
-          try {{
-            setStatus("验证成功，正在回传结果...", "");
-            const riskContext = await riskContextPromise;
-            if (!riskContext.detect || !riskContext.dfpToken) {{
-              throw new Error("浏览器风控上下文不完整，请刷新页面后重试。");
-            }}
-            await postJson(callbackUrl, {{
-              action: "complete",
-              token,
-              detect: riskContext.detect,
-              dfpToken: riskContext.dfpToken
-            }});
-            setStatus("验证成功，已经回传给本地程序。可以回到终端继续。", "ok");
-          }} catch (error) {{
-            captchaSubmitStarted = false;
-            setStatus("验证码已完成，但回传失败，请把浏览器和终端错误一起反馈。\\n" + error, "err");
-          }}
-        }},
-        onready: function() {{
-          setStatus("验证码已加载，请按页面提示完成验证。", "");
-        }},
-        onClose: function() {{
-          setStatus("验证码窗口已关闭，如未成功请重新打开终端输出的链接。", "");
-        }}
-      }});
-    }}
     let captchaSubmitStarted = false;
     const captchaSize = computeCaptchaSize();
     const captchaEl = document.getElementById("captcha");
     captchaEl.style.width = captchaSize.width;
     captchaEl.style.minHeight = captchaSize.height;
     const riskContextPromise = collectRiskContext();
-    async function bootstrapCaptcha() {{
-      try {{
-        setStatus("正在准备浏览器风控环境...", "");
-        const riskContext = await riskContextPromise;
-        setStatus("正在初始化验证码...", "");
-        const ticket = await prepareCaptchaTicket(riskContext);
-        initCaptcha(ticket, riskContextPromise);
-      }} catch (error) {{
-        setStatus("验证码初始化失败，请刷新页面后重试。\\n" + error, "err");
+    SnCaptcha.init({{
+      env: "{env}",
+      target: "captcha",
+      ticket: "{ticket}",
+      client: "app",
+      width: captchaSize.width,
+      height: captchaSize.height,
+      callback: async function(token) {{
+        if (captchaSubmitStarted) {{
+          return;
+        }}
+        captchaSubmitStarted = true;
+        try {{
+          setStatus("验证成功，正在回传结果...", "");
+          const riskContext = await riskContextPromise;
+          if (!riskContext.detect || !riskContext.dfpToken) {{
+            throw new Error("浏览器风控上下文不完整，请刷新页面后重试。");
+          }}
+          const response = await fetch(callbackUrl, {{
+            method: "POST",
+            headers: {{
+              "Content-Type": "application/json"
+            }},
+            body: JSON.stringify({{
+              token,
+              detect: riskContext.detect,
+              dfpToken: riskContext.dfpToken
+            }})
+          }});
+          if (!response.ok) {{
+            throw new Error("回传失败: " + response.status);
+          }}
+          setStatus("验证成功，已经回传给本地程序。可以回到终端继续。", "ok");
+        }} catch (error) {{
+          captchaSubmitStarted = false;
+          setStatus("验证码已完成，但回传失败，请把浏览器和终端错误一起反馈。\\n" + error, "err");
+        }}
+      }},
+      onready: function() {{
+        setStatus("验证码已加载，请按页面提示完成验证。", "");
+      }},
+      onClose: function() {{
+        setStatus("验证码窗口已关闭，如未成功请重新打开终端输出的链接。", "");
       }}
-    }}
-    bootstrapCaptcha();
+    }});
   </script>
 </body>
 </html>
@@ -287,22 +235,19 @@ HTML_TEMPLATE = """<!doctype html>
 
 def render_captcha_page(
   *,
-  ticket: str | None = None,
+  ticket: str,
   env: str = "prd",
   script_urls: list[str] | None = None,
   callback_url: str = "/callback",
-  prepare_url: str | None = None,
 ) -> str:
   return HTML_TEMPLATE.format(
     env=env,
-    ticket=ticket or "",
+    ticket=ticket,
     script_urls_json=json.dumps(
       script_urls or DEFAULT_RISK_CONTEXT_SCRIPT_URLS,
       ensure_ascii=False,
     ),
     callback_url_json=json.dumps(callback_url, ensure_ascii=False),
-    prepare_url_json=json.dumps(prepare_url, ensure_ascii=False),
-    initial_ticket_json=json.dumps(ticket, ensure_ascii=False),
   )
 
 class _ThreadedHTTPServer(ThreadingHTTPServer):
