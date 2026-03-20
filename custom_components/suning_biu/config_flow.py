@@ -144,6 +144,12 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     client_lib = load_client_lib()
     if self._client is None or self._phone_number is None:
       return self.async_abort(reason="captcha_session_expired")
+    session = async_get_iar_captcha_session(self.hass, self.flow_id)
+    if session is None or session.result is None:
+      return self.async_abort(reason="captcha_session_expired")
+    if not session.result.detect or not session.result.dfp_token:
+      self._clear_iar_captcha_session()
+      return self.async_abort(reason="captcha_risk_context_missing")
     session = async_pop_iar_captcha_session(self.hass, self.flow_id)
     if session is None or session.result is None:
       return self.async_abort(reason="captcha_session_expired")

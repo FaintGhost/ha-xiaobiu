@@ -125,11 +125,10 @@ HTML_TEMPLATE = """<!doctype html>
         document.head.appendChild(script);
       }});
     }}
-    async function collectRiskContext() {{
-      for (const src of riskContextScripts) {{
-        await loadScript(src);
-      }}
-      await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    async function sleep(ms) {{
+      await new Promise((resolve) => window.setTimeout(resolve, ms));
+    }}
+    function readRiskContextOnce() {{
       let detect = "";
       let dfpToken = "";
       try {{
@@ -147,6 +146,21 @@ HTML_TEMPLATE = """<!doctype html>
         console.warn("collect dfp token failed", error);
       }}
       return {{ detect, dfpToken }};
+    }}
+    async function collectRiskContext() {{
+      for (const src of riskContextScripts) {{
+        await loadScript(src);
+      }}
+      const deadline = Date.now() + 10000;
+      let lastRiskContext = readRiskContextOnce();
+      while (Date.now() < deadline) {{
+        if (lastRiskContext.detect && lastRiskContext.dfpToken) {{
+          return lastRiskContext;
+        }}
+        await sleep(250);
+        lastRiskContext = readRiskContextOnce();
+      }}
+      throw new Error("未能采集浏览器风控上下文，请刷新页面后重试。");
     }}
     function computeCaptchaSize() {{
       const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 390;
@@ -166,10 +180,7 @@ HTML_TEMPLATE = """<!doctype html>
     const captchaEl = document.getElementById("captcha");
     captchaEl.style.width = captchaSize.width;
     captchaEl.style.minHeight = captchaSize.height;
-    const riskContextPromise = collectRiskContext().catch((error) => {{
-      console.warn("collect risk context failed", error);
-      return {{ detect: "", dfpToken: "" }};
-    }});
+    const riskContextPromise = collectRiskContext();
     SnCaptcha.init({{
       env: "{env}",
       target: "captcha",
@@ -181,6 +192,9 @@ HTML_TEMPLATE = """<!doctype html>
         try {{
           setStatus("验证成功，正在回传结果...", "");
           const riskContext = await riskContextPromise;
+          if (!riskContext.detect || !riskContext.dfpToken) {{
+            throw new Error("浏览器风控上下文不完整，请刷新页面后重试。");
+          }}
           const response = await fetch(callbackUrl, {{
             method: "POST",
             headers: {{
@@ -306,13 +320,18 @@ class LocalCaptchaBridge:
         raw_body = self.rfile.read(length)
         payload = json.loads(raw_body.decode("utf-8"))
         token = (payload.get("token") or "").strip()
+        detect = (payload.get("detect") or "").strip()
+        dfp_token = (payload.get("dfpToken") or "").strip()
         if not token:
           self.send_error(HTTPStatus.BAD_REQUEST, "missing token")
           return
+        if not detect or not dfp_token:
+          self.send_error(HTTPStatus.BAD_REQUEST, "missing risk context")
+          return
         bridge._result = CaptchaBridgeResult(
           token=token,
-          detect=(payload.get("detect") or "").strip() or None,
-          dfp_token=(payload.get("dfpToken") or "").strip() or None,
+          detect=detect,
+          dfp_token=dfp_token,
         )
         bridge._event.set()
         body = json.dumps({"ok": True}).encode("utf-8")

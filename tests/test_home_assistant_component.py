@@ -465,6 +465,31 @@ async def test_iar_captcha_step_aborts_when_session_is_missing(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_iar_captcha_done_aborts_when_risk_context_is_missing(tmp_path: Path) -> None:
+  flow = SuningConfigFlow()
+  flow.hass = HomeAssistant(str(tmp_path))
+  flow.hass.http = FakeHTTP()
+  flow.context = {"source": config_entries.SOURCE_USER}
+  flow.flow_id = "flow-123"
+  flow._captcha_kind = "iar"
+  flow._client = SimpleNamespace()
+  flow._phone_number = "13800000000"
+
+  session = async_create_iar_captcha_session(
+    flow.hass,
+    flow_id="flow-123",
+    ticket="ticket-123",
+  )
+  session.result = IARCaptchaResult(token="iar-token")
+
+  result = await flow.async_step_captcha_done()
+
+  assert result["type"] == "abort"
+  assert result["reason"] == "captcha_risk_context_missing"
+  assert async_get_iar_captcha_session(flow.hass, "flow-123") is None
+
+
+@pytest.mark.asyncio
 async def test_iar_captcha_view_serves_page_and_triggers_flow_resume(
   monkeypatch: pytest.MonkeyPatch,
   tmp_path: Path,
@@ -529,6 +554,37 @@ async def test_iar_captcha_view_serves_page_and_triggers_flow_resume(
   assert len(created_tasks) == 1
   await created_tasks[0]
   assert resumed_flows == ["flow-123"]
+
+
+@pytest.mark.asyncio
+async def test_iar_captcha_view_rejects_missing_risk_context(tmp_path: Path) -> None:
+  hass = HomeAssistant(str(tmp_path))
+  hass.http = FakeHTTP()
+  hass.config_entries = SimpleNamespace(flow=SimpleNamespace(async_configure=lambda **_kwargs: None))
+
+  session = async_create_iar_captcha_session(
+    hass,
+    flow_id="flow-123",
+    ticket="ticket-123",
+  )
+
+  class FakeRequest:
+    def __init__(self, payload: dict[str, Any] | None = None) -> None:
+      self.app = {KEY_HASS: hass}
+      self._payload = payload or {}
+
+    async def json(self) -> dict[str, Any]:
+      return self._payload
+
+  view = SuningIARCaptchaView()
+  response = await view.post(
+    FakeRequest({"token": "iar-token"}),
+    flow_id="flow-123",
+    nonce=session.nonce,
+  )
+
+  assert response.status == 400
+  assert async_get_iar_captcha_session(hass, "flow-123") is not None
 
 
 def test_climate_entity_exposes_expected_state() -> None:
@@ -596,5 +652,6 @@ def test_strings_json_removes_har_text_and_keeps_reauth() -> None:
   assert "har_not_found" not in payload["config"]["error"]
   assert "{captcha_url}" not in payload["config"]["step"]["captcha"]["description"]
   assert "reauth_confirm" in payload["config"]["step"]
+  assert "captcha_risk_context_missing" in payload["config"]["abort"]
   assert "captcha_session_expired" in payload["config"]["abort"]
   assert "reauth_successful" in payload["config"]["abort"]

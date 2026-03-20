@@ -44,6 +44,7 @@
     },
     "abort": {
       "already_configured": "This Suning account is already configured.",
+      "captcha_risk_context_missing": "Captcha completed, but the browser risk context was missing. Restart the captcha step and try again.",
       "captcha_session_expired": "The captcha session expired. Restart the login flow and try again.",
       "reauth_successful": "Suning account was reauthenticated successfully."
     }

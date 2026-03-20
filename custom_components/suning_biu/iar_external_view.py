@@ -143,12 +143,16 @@ class SuningIARCaptchaView(HomeAssistantView):
     except ValueError:
       return self.json_message("invalid JSON", HTTPStatus.BAD_REQUEST)
     token = (payload.get("token") or "").strip()
+    detect = (payload.get("detect") or "").strip()
+    dfp_token = (payload.get("dfpToken") or "").strip()
     if not token:
       return self.json_message("missing token", HTTPStatus.BAD_REQUEST)
+    if not detect or not dfp_token:
+      return self.json_message("missing risk context", HTTPStatus.BAD_REQUEST)
     session.result = IARCaptchaResult(
       token=token,
-      detect=(payload.get("detect") or "").strip() or None,
-      dfp_token=(payload.get("dfpToken") or "").strip() or None,
+      detect=detect,
+      dfp_token=dfp_token,
     )
     hass.async_create_task(hass.config_entries.flow.async_configure(flow_id=flow_id))
     return self.json({"ok": True})

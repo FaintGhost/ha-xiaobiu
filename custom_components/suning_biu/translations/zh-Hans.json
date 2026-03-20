@@ -44,6 +44,7 @@
     },
     "abort": {
       "already_configured": "该苏宁账号已经配置。",
+      "captcha_risk_context_missing": "验证码已完成，但浏览器风控上下文缺失。请重新开始当前验证码步骤后重试。",
       "captcha_session_expired": "验证码会话已过期，请重新开始登录流程。",
       "reauth_successful": "苏宁账号已重新认证成功。"
     }

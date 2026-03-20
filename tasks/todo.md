@@ -1,5 +1,48 @@
 # 苏宁小 biu 智家短信登录接入任务
 
+## HA IAR Repeat Loop Fix
+
+### Plan
+
+- [x] 对照 CLI 已验证成功的 IAR 链路与 HA external step 链路，找出重复弹验证码的状态差异
+- [x] 修正 HA IAR 完成后的重试逻辑，确保正确复用浏览器风控上下文并避免再次触发验证
+- [x] 补充最小回归测试，覆盖 HA IAR 成功后不应再次创建新验证会话
+- [x] 运行定向验证并回填 tasks / lessons
+
+### Notes
+
+- 当前重复弹 IAR 的更可能根因不是 flow 生命周期，而是验证码页虽然回传了 token，但浏览器侧 `detect` / `dfpToken` 没有稳定采集成功，后端仍继续重试 `sendCode.do`
+- 这种情况下客户端会再次拿到 `isIarVerifyCode`，从用户视角就是“明明拼图过了，但又弹出新的验证框”
+
+### Review
+
+- 已更新 `src/suning_biu_ha/captcha_bridge.py` 与 vendored 副本
+  - 采集风控上下文由固定等待 `1200ms` 改成最多 `10s` 的轮询等待
+  - 只有拿到非空 `detect` 与 `dfpToken` 才允许回传 token
+  - 本地桥接与 HA external step 回调现在都会拒绝缺少风险上下文的 POST，避免静默重试
+- 已更新 `custom_components/suning_biu/iar_external_view.py`
+  - 缺少 `detect` / `dfpToken` 时直接返回 `400 missing risk context`
+- 已更新 `custom_components/suning_biu/config_flow.py`
+  - `captcha_done` 在消费 session 前会校验风险上下文完整性
+  - 若上下文缺失，直接 `captcha_risk_context_missing` abort，而不是继续触发下一轮 IAR
+- 已更新翻译与字符串资源
+  - 新增 `captcha_risk_context_missing` abort 文案
+- 已更新测试
+  - `tests/test_captcha_bridge.py` 覆盖本地桥接拒绝缺少风控上下文的回调
+  - `tests/test_home_assistant_component.py` 覆盖 HA view 拒绝缺少风控上下文，以及 `captcha_done` 缺上下文时直接 abort
+
+### Verification
+
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run python -m pytest tests/test_captcha_bridge.py -q`
+- `env UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/tmp/uv-suning-ha-check uv run --group dev --python 3.14 --with 'homeassistant==2026.3.2' python -m pytest tests/test_home_assistant_component.py -q`
+- `env UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/tmp/uv-suning-ha-check uv run --group dev --python 3.14 --with 'homeassistant==2026.3.2' python -m pytest -q`
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run python -m compileall custom_components/suning_biu src/suning_biu_ha tests`
+
+### Risks
+
+- 本轮修复把“拿不到浏览器风控上下文”的症状从“静默重复弹框”改成“显式失败并提示重试”；如果未来发现还存在别的服务器侧风控因素，需要再继续补抓包或日志
+- `detect` / `dfpToken` 的生成仍依赖苏宁当前前端脚本的全局入口；若 `bd.rst` 或 `_dfp.getToken()` 失效，需要重新适配
+
 ## HA IAR Flow Restart Unblock
 
 ### Plan
