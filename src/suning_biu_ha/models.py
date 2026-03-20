@@ -61,6 +61,12 @@ class SignedRequestTemplate(SuningBaseModel):
     return headers
 
 
+class FamilyInfo(SuningBaseModel):
+  family_id: str
+  name: str
+  raw: dict[str, Any] = Field(default_factory=dict)
+
+
 class HAClimatePreview(SuningBaseModel):
   entity_domain: str
   translation_key: str

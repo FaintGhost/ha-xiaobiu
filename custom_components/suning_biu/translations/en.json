@@ -1,0 +1,53 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect Suning Biu",
+        "description": "Enter the mobile number used for Suning SMS login and the HAR file path that contains the signed family/device requests.",
+        "data": {
+          "phone_number": "Phone number",
+          "international_code": "International code",
+          "har_path": "HAR file path"
+        }
+      },
+      "captcha": {
+        "title": "Complete captcha",
+        "description": "Suning requires additional verification before sending the SMS code. For IAR verification, open {captcha_url} in a browser, complete the puzzle, then submit this step again.",
+        "data": {
+          "captcha_value": "Captcha token"
+        }
+      },
+      "sms_code": {
+        "title": "Enter SMS code",
+        "description": "Enter the SMS verification code that Suning sent to the configured phone number.",
+        "data": {
+          "sms_code": "SMS code"
+        }
+      },
+      "family": {
+        "title": "Select family",
+        "description": "Choose the Suning family whose devices should be imported into Home Assistant.",
+        "data": {
+          "family_id": "Family"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Suning.",
+      "invalid_auth": "The SMS code is invalid or expired.",
+      "har_not_found": "The HAR file path does not exist.",
+      "captcha_not_ready": "Captcha has not been completed yet.",
+      "no_supported_devices": "No supported air conditioner devices were found in the selected family."
+    },
+    "abort": {
+      "already_configured": "This Suning account is already configured."
+    }
+  },
+  "entity": {
+    "climate": {
+      "suning_air_conditioner": {
+        "name": "Air conditioner"
+      }
+    }
+  }
+}

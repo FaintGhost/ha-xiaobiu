@@ -1,0 +1,53 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "连接苏宁小 biu",
+        "description": "请输入用于苏宁短信登录的手机号，以及包含家庭/设备接口签名请求的 HAR 文件路径。",
+        "data": {
+          "phone_number": "手机号",
+          "international_code": "国际区号",
+          "har_path": "HAR 文件路径"
+        }
+      },
+      "captcha": {
+        "title": "完成验证码验证",
+        "description": "苏宁在发送短信前要求额外验证。若当前为 IAR 拼图验证，请在浏览器中打开 {captcha_url} 完成拼图，然后再次提交本步骤。",
+        "data": {
+          "captcha_value": "验证码 token"
+        }
+      },
+      "sms_code": {
+        "title": "输入短信验证码",
+        "description": "请输入苏宁发送到当前手机号上的短信验证码。",
+        "data": {
+          "sms_code": "短信验证码"
+        }
+      },
+      "family": {
+        "title": "选择家庭",
+        "description": "请选择需要导入到 Home Assistant 的苏宁家庭。",
+        "data": {
+          "family_id": "家庭"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "连接苏宁失败。",
+      "invalid_auth": "短信验证码无效或已过期。",
+      "har_not_found": "HAR 文件路径不存在。",
+      "captcha_not_ready": "验证码尚未完成。",
+      "no_supported_devices": "所选家庭下未发现支持的空调设备。"
+    },
+    "abort": {
+      "already_configured": "该苏宁账号已经配置。"
+    }
+  },
+  "entity": {
+    "climate": {
+      "suning_air_conditioner": {
+        "name": "空调"
+      }
+    }
+  }
+}
