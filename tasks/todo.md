@@ -1,5 +1,46 @@
 # 苏宁小 biu 智家短信登录接入任务
 
+## Manifest Private Requirement Fix
+
+### Plan
+
+- [x] 对照 Home Assistant 官方文档确认 `manifest.requirements` 与 config flow 加载的约束
+- [x] 去掉 private GitHub requirement，改为自带 vendored runtime，确保 custom component 可独立分发
+- [x] 补充针对 vendored runtime 与纯 Home Assistant 环境导入的测试/验证
+- [x] 回填修复结论与风险
+
+### Notes
+
+- 原 `manifest.json` 通过 `codeload.github.com` 拉取 `suning-biu-ha` tarball，但该 repo 为 private，用户环境无法下载
+- Home Assistant 在加载 config flow 前会先处理 integration requirements；requirements 安装失败会直接导致配置向导加载失败
+
+### Review
+
+- 已更新 `custom_components/suning_biu/manifest.json`
+  - 删除 private GitHub tarball requirement
+  - 改为显式 `requirements: []`
+  - 版本提升到 `0.1.2`
+- 已新增 vendored runtime
+  - 新增 `custom_components/suning_biu/suning_biu_ha/`
+  - 将 `src/suning_biu_ha` 的运行时代码一并带入 custom component 内部，避免依赖仓库外部安装步骤
+- 已更新 `custom_components/suning_biu/client_lib.py`
+  - 改为从 `.suning_biu_ha` 相对导入运行时代码
+  - 现在 custom component 可在没有顶层 `suning_biu_ha` 包的 Home Assistant 环境中直接加载
+- 已更新文档与测试
+  - `README.md` 说明 custom integration 现在自带 vendored runtime
+  - `tests/test_home_assistant_component.py` 新增 `load_client_lib()` 使用 vendored runtime 的断言
+
+### Verification
+
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run python -m compileall custom_components/suning_biu src/suning_biu_ha tests`
+- `env UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/tmp/uv-suning-ha-check uv run --group dev --python 3.14 --with 'homeassistant==2026.3.2' python -m pytest -q`
+- `env UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/tmp/uv-ha-core-only uv run --no-project --python 3.14 --with 'homeassistant==2026.3.2' python - <<'PY' ... load_client_lib() ... import config_flow ... PY`
+
+### Risks
+
+- 当前 vendored runtime 与 `src/suning_biu_ha` 存在双份代码；后续若继续演进登录/设备协议，需要同步维护两处，或进一步抽出统一分发策略
+- `requirements` 现在为空，依赖的是 Home Assistant `2026.3.2` 自带的 `requests` / `cryptography` / `pydantic`；若后续目标 HA 版本移除其中任一依赖，需要重新评估 manifest
+
 ## Python 3.14 And Full Test Pass
 
 ### Plan

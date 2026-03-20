@@ -12,8 +12,6 @@
   "loggers": [
     "suning_biu_ha"
   ],
-  "requirements": [
-    "suning-biu-ha @ https://codeload.github.com/FaintGhost/ha-suning/tar.gz/070a9f17706c6a278c5031d2376c13262c239779"
-  ],
-  "version": "0.1.1"
+  "requirements": [],
+  "version": "0.1.2"
 }

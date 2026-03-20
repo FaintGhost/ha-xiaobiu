@@ -26,7 +26,7 @@ class SuningClientLib:
 
 @lru_cache(maxsize=1)
 def _load_client_lib() -> SuningClientLib:
-  from suning_biu_ha import (
+  from .suning_biu_ha import (
     AirConditionerStatus,
     AuthenticationError,
     CaptchaRequiredError,
@@ -35,7 +35,7 @@ def _load_client_lib() -> SuningClientLib:
     SuningError,
     SuningSmartHomeClient,
   )
-  from suning_biu_ha.captcha_bridge import LocalCaptchaBridge
+  from .suning_biu_ha.captcha_bridge import LocalCaptchaBridge
 
   return SuningClientLib(
     AirConditionerStatus=AirConditionerStatus,

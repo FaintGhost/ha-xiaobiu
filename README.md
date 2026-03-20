@@ -8,6 +8,7 @@ This repository now also includes a Home Assistant custom integration at `custom
 
 - Home Assistant version target: `2026.3.2`
 - Project Python target: `3.14`
+- The custom integration vendors its own runtime under `custom_components/suning_biu/suning_biu_ha` and no longer depends on a private GitHub package URL in `manifest.json`
 - Setup path: **Settings → Devices & Services → Add Integration → Suning Biu**
 - Config flow inputs:
   - phone number
