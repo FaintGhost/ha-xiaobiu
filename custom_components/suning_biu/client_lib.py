@@ -26,7 +26,7 @@ class SuningClientLib:
 
 @lru_cache(maxsize=1)
 def _load_client_lib() -> SuningClientLib:
-  from .suning_biu_ha import (
+  from xiaobiu import (
     AirConditionerStatus,
     AuthenticationError,
     CaptchaRequiredError,
@@ -35,7 +35,7 @@ def _load_client_lib() -> SuningClientLib:
     SuningError,
     SuningSmartHomeClient,
   )
-  from .suning_biu_ha.captcha_bridge import LocalCaptchaBridge
+  from xiaobiu.captcha_bridge import LocalCaptchaBridge
 
   return SuningClientLib(
     AirConditionerStatus=AirConditionerStatus,
@@ -53,5 +53,5 @@ def load_client_lib() -> SuningClientLib:
   try:
     return _load_client_lib()
   except Exception as error:
-    _LOGGER.exception("Failed to import suning_biu_ha runtime dependency")
-    raise SuningDependencyError("suning_biu_ha runtime dependency is unavailable") from error
+    _LOGGER.exception("Failed to import xiaobiu runtime dependency")
+    raise SuningDependencyError("xiaobiu runtime dependency is unavailable") from error

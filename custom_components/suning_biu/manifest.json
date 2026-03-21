@@ -10,8 +10,10 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/FaintGhost/ha-suning/issues",
   "loggers": [
-    "suning_biu_ha"
+    "xiaobiu"
   ],
-  "requirements": [],
+  "requirements": [
+    "python-xiaobiu==0.1.0"
+  ],
   "version": "0.1.5"
 }

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from urllib.request import Request, urlopen
 
-from suning_biu_ha.captcha_bridge import LocalCaptchaBridge
+from xiaobiu.captcha_bridge import LocalCaptchaBridge
 
 
 def test_local_captcha_bridge_serves_ticket_and_accepts_callback() -> None:

@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from urllib.parse import unquote_plus
 
-from suning_biu_ha import SuningSmartHomeClient, parse_jsonp_or_json
-from suning_biu_ha.client import (
+from xiaobiu import SuningSmartHomeClient, parse_jsonp_or_json
+from xiaobiu.client import (
   CaptchaRequiredError,
   CaptchaSolution,
   DEVICE_LIST_URL,
@@ -25,8 +25,8 @@ from suning_biu_ha.client import (
   main as client_main,
   parse_login_page_config,
 )
-from suning_biu_ha.crypto import SuAESCipher
-from suning_biu_ha.models import CaptchaBridgeResult
+from xiaobiu.crypto import SuAESCipher
+from xiaobiu.models import CaptchaBridgeResult
 
 SAMPLE_LOGIN_PAGE = """
 <script>

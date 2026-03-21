@@ -10,7 +10,7 @@ from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-from .suning_biu_ha.captcha_bridge import (
+from xiaobiu.captcha_bridge import (
   DEFAULT_RISK_CONTEXT_SCRIPT_URLS,
   render_captcha_page,
 )

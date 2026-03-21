@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import base64
 
-from suning_biu_ha.client import DEFAULT_LOGIN_PAGE_CONFIG
-from suning_biu_ha.crypto import (
+from xiaobiu.client import DEFAULT_LOGIN_PAGE_CONFIG
+from xiaobiu.crypto import (
   SuAESCipher,
   decode_suning_base64,
   encode_suning_base64,

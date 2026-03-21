@@ -78,15 +78,11 @@ def test_load_client_lib_wraps_runtime_import_error(monkeypatch: pytest.MonkeyPa
     load_client_lib()
 
 
-def test_load_client_lib_uses_vendored_runtime() -> None:
+def test_load_client_lib_uses_pypi_package() -> None:
   client_lib = load_client_lib()
 
-  assert client_lib.SuningSmartHomeClient.__module__.startswith(
-    "custom_components.suning_biu.suning_biu_ha"
-  )
-  assert client_lib.LocalCaptchaBridge.__module__.startswith(
-    "custom_components.suning_biu.suning_biu_ha"
-  )
+  assert client_lib.SuningSmartHomeClient.__module__.startswith("xiaobiu")
+  assert client_lib.LocalCaptchaBridge.__module__.startswith("xiaobiu")
 
 
 @pytest.mark.asyncio

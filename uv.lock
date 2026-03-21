@@ -326,6 +326,20 @@ wheels = [
 ]
 
 [[package]]
+name = "python-xiaobiu"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "pydantic" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/08/15/c370dbe0721b59fd43802ad96bbb1bb82ac59c1541747feba99f120981b3/python_xiaobiu-0.1.0.tar.gz", hash = "sha256:ffdb75cea440d0a8583675a56b210ef2e9543c7c40ce9f5702f8f22def6d2932", size = 43918, upload-time = "2026-03-21T23:15:29.599Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/91/a7/bf7e05c48d0bf505e0ed218a2595ad30afbbd6f0b0473fcbcf983fa43a46/python_xiaobiu-0.1.0-py3-none-any.whl", hash = "sha256:b35069dbf2b577b6ed26eaf682a17ce69cae12cdbc3183aaa024b2a55687ae36", size = 22084, upload-time = "2026-03-21T23:15:28.03Z" },
+]
+
+[[package]]
 name = "requests"
 version = "2.32.5"
 source = { registry = "https://pypi.org/simple" }
@@ -347,6 +361,7 @@ source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
     { name = "pydantic" },
+    { name = "python-xiaobiu" },
     { name = "requests" },
 ]
 
@@ -361,6 +376,7 @@ dev = [
 requires-dist = [
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "python-xiaobiu", specifier = ">=0.1.0" },
     { name = "requests", specifier = ">=2.32.5" },
 ]
 
