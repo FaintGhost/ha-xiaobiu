@@ -39,6 +39,8 @@ from custom_components.suning_biu.coordinator import SuningDataUpdateCoordinator
 class FakeConfigEntry:
   data: dict[str, Any]
   entry_id: str = "entry-1"
+  unique_id: str | None = "0086:13800000000"
+  title: str = "我的家"
   runtime_data: Any = None
   state: Any = config_entries.ConfigEntryState.SETUP_IN_PROGRESS
 
@@ -447,6 +449,180 @@ async def test_reauth_sms_code_step_updates_existing_entry(
   assert result == {"type": "abort", "reason": "reauth_successful", "entry_id": "entry-1"}
   assert fake_client.login_calls == [("13800000000", "123456", "0086")]
   assert fake_client.keep_alive_called is True
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_step_loads_family_list_from_saved_session(
+  monkeypatch: pytest.MonkeyPatch,
+  tmp_path: Path,
+) -> None:
+  init_calls: list[dict[str, Any]] = []
+
+  class AuthenticationError(Exception):
+    pass
+
+  class SuningError(Exception):
+    pass
+
+  class FakeClient:
+    def __init__(self, *, state_path: Path, load_state: bool = True) -> None:
+      init_calls.append({"state_path": state_path, "load_state": load_state})
+      self.state = SimpleNamespace(phone_number=None, international_code=None)
+
+    def list_family_infos(self) -> list[object]:
+      return [
+        SimpleNamespace(family_id="37790", name="我的家"),
+        SimpleNamespace(family_id="48880", name="客厅"),
+      ]
+
+  flow = SuningConfigFlow()
+  flow.hass = HomeAssistant(str(tmp_path))
+  flow.context = {"source": config_entries.SOURCE_RECONFIGURE, "entry_id": "entry-1"}
+
+  config_entry = FakeConfigEntry(
+    data={
+      CONF_PHONE_NUMBER: "13800000000",
+      CONF_INTERNATIONAL_CODE: "0086",
+      CONF_FAMILY_ID: "37790",
+      CONF_FAMILY_NAME: "我的家",
+    }
+  )
+
+  monkeypatch.setattr(flow, "_get_reconfigure_entry", lambda: config_entry)
+  monkeypatch.setattr(
+    "custom_components.suning_biu.config_flow.load_client_lib",
+    lambda: SimpleNamespace(
+      AuthenticationError=AuthenticationError,
+      SuningError=SuningError,
+      SuningSmartHomeClient=FakeClient,
+    ),
+  )
+
+  result = await flow.async_step_reconfigure({})
+
+  assert result["type"] == "form"
+  assert result["step_id"] == "family"
+  assert init_calls == [
+    {
+      "state_path": tmp_path / ".storage" / "suning_biu_0086_13800000000.json",
+      "load_state": True,
+    }
+  ]
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_step_falls_back_to_sms_when_session_expired(
+  monkeypatch: pytest.MonkeyPatch,
+  tmp_path: Path,
+) -> None:
+  class AuthenticationError(Exception):
+    pass
+
+  class SuningError(Exception):
+    pass
+
+  class FakeClient:
+    def __init__(self, *, state_path: Path, load_state: bool = True) -> None:
+      self.state = SimpleNamespace(phone_number=None, international_code=None)
+
+    def list_family_infos(self) -> list[object]:
+      raise AuthenticationError("session expired")
+
+  flow = SuningConfigFlow()
+  flow.hass = HomeAssistant(str(tmp_path))
+  flow.context = {"source": config_entries.SOURCE_RECONFIGURE, "entry_id": "entry-1"}
+
+  config_entry = FakeConfigEntry(
+    data={
+      CONF_PHONE_NUMBER: "13800000000",
+      CONF_INTERNATIONAL_CODE: "0086",
+      CONF_FAMILY_ID: "37790",
+      CONF_FAMILY_NAME: "我的家",
+    }
+  )
+
+  monkeypatch.setattr(flow, "_get_reconfigure_entry", lambda: config_entry)
+  monkeypatch.setattr(
+    "custom_components.suning_biu.config_flow.load_client_lib",
+    lambda: SimpleNamespace(
+      AuthenticationError=AuthenticationError,
+      SuningError=SuningError,
+      SuningSmartHomeClient=FakeClient,
+    ),
+  )
+
+  result = await flow.async_step_reconfigure({})
+
+  assert result["type"] == "form"
+  assert result["step_id"] == "reconfigure_auth"
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_family_step_updates_existing_entry(
+  monkeypatch: pytest.MonkeyPatch,
+  tmp_path: Path,
+) -> None:
+  class SuningError(Exception):
+    pass
+
+  class FakeClient:
+    def list_air_conditioner_statuses(self, family_id: str) -> list[object]:
+      assert family_id == "48880"
+      return [object()]
+
+  updated_entries: list[dict[str, Any]] = []
+  config_entry = FakeConfigEntry(
+    data={
+      CONF_PHONE_NUMBER: "13800000000",
+      CONF_INTERNATIONAL_CODE: "0086",
+      CONF_FAMILY_ID: "37790",
+      CONF_FAMILY_NAME: "我的家",
+    }
+  )
+
+  flow = SuningConfigFlow()
+  flow.hass = HomeAssistant(str(tmp_path))
+  flow.hass.config_entries = SimpleNamespace(
+    async_update_entry=lambda entry, **kwargs: updated_entries.append(
+      {"entry": entry, **kwargs}
+    )
+  )
+  flow.context = {"source": config_entries.SOURCE_RECONFIGURE, "entry_id": "entry-1"}
+  flow._client = FakeClient()
+  flow._phone_number = "13800000000"
+  flow._international_code = "0086"
+  flow._families = [
+    SimpleNamespace(family_id="37790", name="我的家"),
+    SimpleNamespace(family_id="48880", name="客厅"),
+  ]
+
+  monkeypatch.setattr(flow, "_get_reconfigure_entry", lambda: config_entry)
+  monkeypatch.setattr(
+    "custom_components.suning_biu.config_flow.load_client_lib",
+    lambda: SimpleNamespace(SuningError=SuningError),
+  )
+  monkeypatch.setattr(
+    flow,
+    "async_update_reload_and_abort",
+    lambda entry, **kwargs: {"type": "abort", "entry": entry, **kwargs},
+  )
+
+  result = await flow.async_step_family({CONF_FAMILY_ID: "48880"})
+
+  assert result["type"] == "abort"
+  assert result["reason"] == "reconfigure_successful"
+  assert result["data_updates"] == {
+    CONF_PHONE_NUMBER: "13800000000",
+    CONF_INTERNATIONAL_CODE: "0086",
+    CONF_FAMILY_ID: "48880",
+    CONF_FAMILY_NAME: "客厅",
+  }
+  assert updated_entries == [
+    {
+      "entry": config_entry,
+      "title": "客厅",
+    }
+  ]
 
 
 @pytest.mark.asyncio
@@ -931,10 +1107,12 @@ def test_strings_json_removes_har_text_and_keeps_reauth() -> None:
   payload = json.loads(strings_path.read_text(encoding="utf-8"))
 
   assert "har_path" not in payload["config"]["step"]["user"]["data"]
-  assert "reconfigure" not in payload["config"]["step"]
+  assert "reconfigure" in payload["config"]["step"]
+  assert "reconfigure_auth" in payload["config"]["step"]
   assert "har_not_found" not in payload["config"]["error"]
   assert "{captcha_url}" not in payload["config"]["step"]["captcha"]["description"]
   assert "reauth_confirm" in payload["config"]["step"]
   assert "captcha_risk_context_missing" in payload["config"]["abort"]
   assert "captcha_session_expired" in payload["config"]["abort"]
   assert "reauth_successful" in payload["config"]["abort"]
+  assert "reconfigure_successful" in payload["config"]["abort"]

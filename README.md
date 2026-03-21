@@ -39,6 +39,7 @@ This repository includes a Home Assistant custom integration at `custom_componen
   - the verification page computes the current browser risk context and posts it back together with the IAR token
   - after the verification page submits successfully, Home Assistant resumes the flow automatically
   - after SMS login succeeds, the config flow lets you choose a family
+  - after the integration is added, you can open the entry menu and use **Reconfigure** to refresh the family list and switch to a different family
   - the integration signs the smart-home app family/device requests at runtime and no longer asks for a HAR file
 - Entity model:
   - devices are refreshed through a coordinator with periodic keep-alive
@@ -134,6 +135,7 @@ env UV_CACHE_DIR=/tmp/uv-cache uv run main.py device-status \
 5. If the flow enters the IAR step, open the Home Assistant provided verification page in the same browser, finish the puzzle, and wait for the flow to resume automatically.
 6. Enter the SMS code, select the family, and confirm that `climate` entities are created.
 7. If the login succeeds but devices do not appear, verify the selected family actually contains supported air conditioners.
+8. To switch the imported family later, open the integration entry menu in Home Assistant and use **Reconfigure**. If the saved session has expired, the flow will ask for a fresh SMS code before showing the family list again.
 
 ## Library usage
 

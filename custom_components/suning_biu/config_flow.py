@@ -8,7 +8,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
 
 from .iar_external_view import (
@@ -94,6 +94,61 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     return self.async_show_form(
       step_id="reauth_confirm",
+      data_schema=vol.Schema({}),
+      description_placeholders={"phone_number": self._phone_number or ""},
+      errors=errors,
+    )
+
+  async def async_step_reconfigure(
+    self,
+    user_input: dict[str, Any] | None = None,
+  ) -> ConfigFlowResult:
+    errors: dict[str, str] = {}
+    configured_entry = self._get_reconfigure_entry()
+    self._phone_number = configured_entry.data[CONF_PHONE_NUMBER]
+    self._international_code = configured_entry.data[CONF_INTERNATIONAL_CODE]
+
+    if user_input is not None:
+      client_lib, error_key = self._initialize_client(load_state=True)
+      if error_key is None and client_lib is not None:
+        try:
+          self._families = await self.hass.async_add_executor_job(self._client.list_family_infos)
+          return await self.async_step_family()
+        except client_lib.AuthenticationError:
+          return await self.async_step_reconfigure_auth()
+        except client_lib.SuningError:
+          errors["base"] = "cannot_connect"
+      elif error_key is not None:
+        errors["base"] = error_key
+
+    return self.async_show_form(
+      step_id="reconfigure",
+      data_schema=vol.Schema({}),
+      description_placeholders={
+        "phone_number": self._phone_number,
+        "family_name": str(configured_entry.data.get(CONF_FAMILY_NAME, "")),
+      },
+      errors=errors,
+    )
+
+  async def async_step_reconfigure_auth(
+    self,
+    user_input: dict[str, Any] | None = None,
+  ) -> ConfigFlowResult:
+    errors: dict[str, str] = {}
+
+    if user_input is not None:
+      client_lib, error_key = self._initialize_client(load_state=False)
+      if error_key is None and client_lib is not None:
+        try:
+          return await self._async_send_sms()
+        except client_lib.SuningError:
+          errors["base"] = "cannot_connect"
+      elif error_key is not None:
+        errors["base"] = error_key
+
+    return self.async_show_form(
+      step_id="reconfigure_auth",
       data_schema=vol.Schema({}),
       description_placeholders={"phone_number": self._phone_number or ""},
       errors=errors,
@@ -222,15 +277,7 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
               data_schema=self._family_schema(),
               errors=errors,
             )
-          return self.async_create_entry(
-            title=self._entry_title(family.name),
-            data={
-              CONF_PHONE_NUMBER: self._phone_number,
-              CONF_INTERNATIONAL_CODE: self._international_code,
-              CONF_FAMILY_ID: family.family_id,
-              CONF_FAMILY_NAME: family.name,
-            },
-          )
+          return self._finish_family_selection(family)
 
     return self.async_show_form(
       step_id="family",
@@ -291,7 +338,7 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       value=user_input["captcha_value"].strip(),
     )
 
-  def _initialize_client(self) -> tuple[Any | None, str | None]:
+  def _initialize_client(self, *, load_state: bool = False) -> tuple[Any | None, str | None]:
     try:
       client_lib = load_client_lib()
     except SuningDependencyError:
@@ -306,17 +353,26 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._international_code,
         self._phone_number,
       ),
-      load_state=False,
+      load_state=load_state,
     )
     self._client.state.phone_number = self._phone_number
     self._client.state.international_code = self._international_code
-    self._client.reset_sms_login_state()
+    if not load_state:
+      self._client.reset_sms_login_state()
     return client_lib, None
 
   def _family_schema(self) -> vol.Schema:
+    default_family_id = None
+    if self.source == config_entries.SOURCE_RECONFIGURE:
+      default_family_id = self._get_reconfigure_entry().data.get(CONF_FAMILY_ID)
+    family_field = (
+      vol.Required(CONF_FAMILY_ID, default=default_family_id)
+      if default_family_id is not None
+      else vol.Required(CONF_FAMILY_ID)
+    )
     return vol.Schema(
       {
-        vol.Required(CONF_FAMILY_ID): SelectSelector(
+        family_field: SelectSelector(
           SelectSelectorConfig(
             options=[
               {"value": family.family_id, "label": family.name}
@@ -341,7 +397,33 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     )
 
   def _entry_title(self, family_name: str) -> str:
-    return f"{self._phone_number} - {family_name}"
+    return family_name
+
+  def _entry_data(self, family: Any) -> dict[str, Any]:
+    return {
+      CONF_PHONE_NUMBER: self._phone_number,
+      CONF_INTERNATIONAL_CODE: self._international_code,
+      CONF_FAMILY_ID: family.family_id,
+      CONF_FAMILY_NAME: family.name,
+    }
+
+  def _finish_family_selection(self, family: Any) -> ConfigFlowResult:
+    data = self._entry_data(family)
+    if self.source == config_entries.SOURCE_RECONFIGURE:
+      configured_entry = self._get_reconfigure_entry()
+      self.hass.config_entries.async_update_entry(
+        configured_entry,
+        title=self._entry_title(family.name),
+      )
+      return self.async_update_reload_and_abort(
+        configured_entry,
+        data_updates=data,
+        reason="reconfigure_successful",
+      )
+    return self.async_create_entry(
+      title=self._entry_title(family.name),
+      data=data,
+    )
 
   def _abort_existing_user_flows(self, unique_id: str) -> None:
     current_flow_id = getattr(self, "flow_id", None)
