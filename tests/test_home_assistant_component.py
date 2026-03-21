@@ -15,24 +15,24 @@ from homeassistant.components.climate.const import HVACMode
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
-from custom_components.suning_biu import async_setup_entry
-from custom_components.suning_biu.client_lib import SuningDependencyError, load_client_lib
-from custom_components.suning_biu.climate import SuningClimateEntity, async_setup_entry as climate_async_setup_entry
-from custom_components.suning_biu.config_flow import SuningConfigFlow
-from custom_components.suning_biu.const import (
+from custom_components.xiaobiu import async_setup_entry
+from custom_components.xiaobiu.client_lib import SuningDependencyError, load_client_lib
+from custom_components.xiaobiu.climate import SuningClimateEntity, async_setup_entry as climate_async_setup_entry
+from custom_components.xiaobiu.config_flow import SuningConfigFlow
+from custom_components.xiaobiu.const import (
   CONF_FAMILY_ID,
   CONF_FAMILY_NAME,
   CONF_INTERNATIONAL_CODE,
   CONF_PHONE_NUMBER,
   DOMAIN,
 )
-from custom_components.suning_biu.iar_external_view import (
+from custom_components.xiaobiu.iar_external_view import (
   IARCaptchaResult,
   SuningIARCaptchaView,
   async_create_iar_captcha_session,
   async_get_iar_captcha_session,
 )
-from custom_components.suning_biu.coordinator import SuningDataUpdateCoordinator
+from custom_components.xiaobiu.coordinator import SuningDataUpdateCoordinator
 
 
 @dataclass(slots=True)
@@ -70,7 +70,7 @@ class FakeHTTP:
 
 def test_load_client_lib_wraps_runtime_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr(
-    "custom_components.suning_biu.client_lib._load_client_lib",
+    "custom_components.xiaobiu.client_lib._load_client_lib",
     lambda: (_ for _ in ()).throw(ModuleNotFoundError("boom")),
   )
 
@@ -116,7 +116,7 @@ async def test_async_setup_entry_ignores_legacy_har_path_and_initializes_client(
   )
 
   monkeypatch.setattr(
-    "custom_components.suning_biu.load_client_lib",
+    "custom_components.xiaobiu.load_client_lib",
     lambda: SimpleNamespace(
       SuningSmartHomeClient=FakeClient,
       AuthenticationError=RuntimeError,
@@ -128,7 +128,7 @@ async def test_async_setup_entry_ignores_legacy_har_path_and_initializes_client(
 
   assert result is True
   assert init_calls[0]["har_path"] is None
-  assert init_calls[0]["state_path"] == tmp_path / ".storage" / "suning_biu_0086_13800000000.json"
+  assert init_calls[0]["state_path"] == tmp_path / ".storage" / "xiaobiu_0086_13800000000.json"
   assert entry.runtime_data.client.state.phone_number == "13800000000"
   assert entry.runtime_data.client.state.international_code == "0086"
 
@@ -146,7 +146,7 @@ async def test_coordinator_raises_config_entry_auth_failed(monkeypatch: pytest.M
       raise AssertionError(f"should not fetch devices for {family_id}")
 
   monkeypatch.setattr(
-    "custom_components.suning_biu.coordinator.load_client_lib",
+    "custom_components.xiaobiu.coordinator.load_client_lib",
     lambda: SimpleNamespace(
       AuthenticationError=AuthenticationError,
       SuningError=RuntimeError,
@@ -238,7 +238,7 @@ async def test_user_step_clears_stale_sms_login_state_before_starting_new_flow(
   flow.flow_id = "flow-123"
 
   monkeypatch.setattr(
-    "custom_components.suning_biu.config_flow.load_client_lib",
+    "custom_components.xiaobiu.config_flow.load_client_lib",
     lambda: SimpleNamespace(
       SuningError=RuntimeError,
       CaptchaRequiredError=CaptchaRequiredError,
@@ -266,7 +266,7 @@ async def test_user_step_clears_stale_sms_login_state_before_starting_new_flow(
   assert created_clients[0].load_state is False
   assert created_clients[0].reset_calls == 1
   assert created_clients[0].state_path == (
-    tmp_path / ".storage" / "suning_biu_0086_13800000000.json"
+    tmp_path / ".storage" / "xiaobiu_0086_13800000000.json"
   )
 
 
@@ -373,7 +373,7 @@ async def test_family_step_creates_entry_without_har_path(
   flow._families = [SimpleNamespace(family_id="37790", name="我的家")]
 
   monkeypatch.setattr(
-    "custom_components.suning_biu.config_flow.load_client_lib",
+    "custom_components.xiaobiu.config_flow.load_client_lib",
     lambda: SimpleNamespace(SuningError=SuningError),
   )
 
@@ -430,7 +430,7 @@ async def test_reauth_sms_code_step_updates_existing_entry(
   )
 
   monkeypatch.setattr(
-    "custom_components.suning_biu.config_flow.load_client_lib",
+    "custom_components.xiaobiu.config_flow.load_client_lib",
     lambda: SimpleNamespace(SuningError=SuningError),
   )
   monkeypatch.setattr(flow, "_get_reauth_entry", lambda: reauth_entry)
@@ -486,7 +486,7 @@ async def test_reconfigure_step_loads_family_list_from_saved_session(
 
   monkeypatch.setattr(flow, "_get_reconfigure_entry", lambda: config_entry)
   monkeypatch.setattr(
-    "custom_components.suning_biu.config_flow.load_client_lib",
+    "custom_components.xiaobiu.config_flow.load_client_lib",
     lambda: SimpleNamespace(
       AuthenticationError=AuthenticationError,
       SuningError=SuningError,
@@ -500,7 +500,7 @@ async def test_reconfigure_step_loads_family_list_from_saved_session(
   assert result["step_id"] == "family"
   assert init_calls == [
     {
-      "state_path": tmp_path / ".storage" / "suning_biu_0086_13800000000.json",
+      "state_path": tmp_path / ".storage" / "xiaobiu_0086_13800000000.json",
       "load_state": True,
     }
   ]
@@ -539,7 +539,7 @@ async def test_reconfigure_step_falls_back_to_sms_when_session_expired(
 
   monkeypatch.setattr(flow, "_get_reconfigure_entry", lambda: config_entry)
   monkeypatch.setattr(
-    "custom_components.suning_biu.config_flow.load_client_lib",
+    "custom_components.xiaobiu.config_flow.load_client_lib",
     lambda: SimpleNamespace(
       AuthenticationError=AuthenticationError,
       SuningError=SuningError,
@@ -594,7 +594,7 @@ async def test_reconfigure_family_step_updates_existing_entry(
 
   monkeypatch.setattr(flow, "_get_reconfigure_entry", lambda: config_entry)
   monkeypatch.setattr(
-    "custom_components.suning_biu.config_flow.load_client_lib",
+    "custom_components.xiaobiu.config_flow.load_client_lib",
     lambda: SimpleNamespace(SuningError=SuningError),
   )
   monkeypatch.setattr(
@@ -678,7 +678,7 @@ async def test_iar_captcha_step_updates_risk_context_before_retry(
   flow._international_code = "0086"
 
   monkeypatch.setattr(
-    "custom_components.suning_biu.config_flow.load_client_lib",
+    "custom_components.xiaobiu.config_flow.load_client_lib",
     lambda: SimpleNamespace(
       SuningError=SuningError,
       CaptchaRequiredError=CaptchaRequiredError,
@@ -809,7 +809,7 @@ async def test_iar_captcha_done_handles_send_sms_error_without_dropping_session(
   )
 
   monkeypatch.setattr(
-    "custom_components.suning_biu.config_flow.load_client_lib",
+    "custom_components.xiaobiu.config_flow.load_client_lib",
     lambda: SimpleNamespace(
       SuningError=SuningError,
       CaptchaRequiredError=type("CaptchaRequiredError", (Exception,), {}),
@@ -817,7 +817,7 @@ async def test_iar_captcha_done_handles_send_sms_error_without_dropping_session(
     ),
   )
 
-  with caplog.at_level(logging.ERROR, logger="custom_components.suning_biu.config_flow"):
+  with caplog.at_level(logging.ERROR, logger="custom_components.xiaobiu.config_flow"):
     result = await flow.async_step_captcha_done()
 
   assert result["type"] == "form"
@@ -864,7 +864,7 @@ async def test_async_send_sms_logs_unsupported_risk_type(
   flow._international_code = "0086"
 
   monkeypatch.setattr(
-    "custom_components.suning_biu.config_flow.load_client_lib",
+    "custom_components.xiaobiu.config_flow.load_client_lib",
     lambda: SimpleNamespace(
       SuningError=SuningError,
       CaptchaRequiredError=CaptchaRequiredError,
@@ -873,7 +873,7 @@ async def test_async_send_sms_logs_unsupported_risk_type(
   )
 
   with (
-    caplog.at_level(logging.ERROR, logger="custom_components.suning_biu.config_flow"),
+    caplog.at_level(logging.ERROR, logger="custom_components.xiaobiu.config_flow"),
     pytest.raises(SuningError, match="unsupported captcha risk type: isUnknownCaptcha"),
   ):
     await flow._async_send_sms()  # noqa: SLF001

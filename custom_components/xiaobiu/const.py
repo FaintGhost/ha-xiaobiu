@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-DOMAIN = "suning_biu"
+DOMAIN = "xiaobiu"
 PLATFORMS = ("climate",)
 
 CONF_PHONE_NUMBER = "phone_number"

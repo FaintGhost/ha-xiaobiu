@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect Suning Biu",
+        "title": "Connect Xiaobiu",
         "description": "Enter the mobile number used for Suning SMS login. The integration now signs the family and device requests automatically.",
         "data": {
           "phone_number": "Phone number",
@@ -24,11 +24,11 @@
         }
       },
       "reauth_confirm": {
-        "title": "Reconnect Suning Biu",
+        "title": "Reconnect Xiaobiu",
         "description": "Suning session for {phone_number} has expired. Submit this step to send a new SMS code and complete reauthentication."
       },
       "reconfigure": {
-        "title": "Update Suning Biu settings",
+        "title": "Update Xiaobiu settings",
         "description": "Update the imported family for {phone_number}. Current family: {family_name}. Submit to load the latest family list from Suning."
       },
       "reconfigure_auth": {

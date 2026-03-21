@@ -1,14 +1,14 @@
 {
-  "domain": "suning_biu",
-  "name": "Suning Biu",
+  "domain": "xiaobiu",
+  "name": "Xiaobiu",
   "codeowners": [
     "@FaintGhost"
   ],
   "config_flow": true,
-  "documentation": "https://github.com/FaintGhost/ha-suning",
+  "documentation": "https://github.com/FaintGhost/ha-xiaobiu",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/FaintGhost/ha-suning/issues",
+  "issue_tracker": "https://github.com/FaintGhost/ha-xiaobiu/issues",
   "loggers": [
     "xiaobiu"
   ],
