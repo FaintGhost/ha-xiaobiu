@@ -1099,7 +1099,7 @@ async def test_climate_async_setup_entry_adds_one_entity_per_device_id(tmp_path:
 
 
 def test_strings_json_removes_har_text_and_keeps_reauth() -> None:
-  strings_path = Path("custom_components/suning_biu/strings.json")
+  strings_path = Path("custom_components/xiaobiu/strings.json")
   payload = json.loads(strings_path.read_text(encoding="utf-8"))
 
   assert "har_path" not in payload["config"]["step"]["user"]["data"]
