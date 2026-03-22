@@ -1,6 +1,6 @@
 [project]
 name = "ha-xiaobiu"
-version = "0.1.5"
+version = "0.1.6"
 description = "Home Assistant custom integration for Xiaobiu (苏宁小biu) smart home devices"
 readme = "README.md"
 authors = [
@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
-  "python-xiaobiu>=0.1.0",
+  "python-xiaobiu>=0.1.1",
 ]
 
 [dependency-groups]

@@ -13,7 +13,7 @@
     "xiaobiu"
   ],
   "requirements": [
-    "python-xiaobiu==0.1.0"
+    "python-xiaobiu==0.1.1"
   ],
-  "version": "0.1.5"
+  "version": "0.1.6"
 }

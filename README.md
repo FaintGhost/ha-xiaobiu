@@ -20,7 +20,7 @@ wget -q -O - https://raw.githubusercontent.com/FaintGhost/ha-xiaobiu/main/instal
 安装指定版本：
 
 ```bash
-wget -q -O - https://raw.githubusercontent.com/FaintGhost/ha-xiaobiu/main/install.sh | ARCHIVE_TAG=v0.1.5 bash -
+wget -q -O - https://raw.githubusercontent.com/FaintGhost/ha-xiaobiu/main/install.sh | ARCHIVE_TAG=v0.1.6 bash -
 ```
 
 安装完成后重启 Home Assistant，进入 **设置 → 设备与服务 → 添加集成**，搜索 **Xiaobiu**。

@@ -1,6 +1,6 @@
 #!/bin/bash
 # wget -q -O - https://raw.githubusercontent.com/FaintGhost/ha-xiaobiu/main/install.sh | bash -
-# wget -q -O - https://raw.githubusercontent.com/FaintGhost/ha-xiaobiu/main/install.sh | ARCHIVE_TAG=v0.1.5 bash -
+# wget -q -O - https://raw.githubusercontent.com/FaintGhost/ha-xiaobiu/main/install.sh | ARCHIVE_TAG=v0.1.6 bash -
 set -e
 
 [ -z "$DOMAIN" ] && DOMAIN="xiaobiu"
