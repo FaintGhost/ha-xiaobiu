@@ -61,7 +61,13 @@
   "entity": {
     "climate": {
       "suning_air_conditioner": {
-        "name": "Air conditioner"
+        "name": "Air conditioner",
+        "preset_modes": {
+          "none": "None",
+          "eco": "Eco",
+          "fresh_air": "Fresh air",
+          "aux_heat": "Aux heating"
+        }
       }
     }
   }

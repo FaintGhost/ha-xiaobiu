@@ -61,7 +61,13 @@
   "entity": {
     "climate": {
       "suning_air_conditioner": {
-        "name": "空调"
+        "name": "空调",
+        "preset_modes": {
+          "none": "无",
+          "eco": "节能",
+          "fresh_air": "新风",
+          "aux_heat": "电辅热"
+        }
       }
     }
   }

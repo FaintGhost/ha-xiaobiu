@@ -1,19 +1,19 @@
 [project]
 name = "ha-xiaobiu"
-version = "0.1.6"
+version = "0.2.0"
 description = "Home Assistant custom integration for Xiaobiu (苏宁小biu) smart home devices"
 readme = "README.md"
 authors = [
   { name = "FaintGhost", email = "zhang.yaowei@live.com" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.14.2"
 dependencies = [
-  "python-xiaobiu>=0.1.1",
+  "python-xiaobiu==0.2.1",
 ]
 
 [dependency-groups]
 dev = [
-  "pillow>=12.1.1",
+  "homeassistant>=2026.5",
   "pytest>=9.0.2",
   "pytest-asyncio>=1.3.0",
 ]

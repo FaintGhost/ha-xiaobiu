@@ -11,9 +11,17 @@ import pytest
 
 from homeassistant import config_entries
 from homeassistant.components.http import KEY_HASS
-from homeassistant.components.climate.const import HVACMode
+from homeassistant.components.climate import ClimateEntityFeature
+from homeassistant.components.climate.const import (
+  SWING_HORIZONTAL_OFF,
+  SWING_HORIZONTAL_ON,
+  SWING_OFF,
+  SWING_ON,
+  HVACAction,
+  HVACMode,
+)
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 
 from custom_components.xiaobiu import async_setup_entry
 from custom_components.xiaobiu.client_lib import SuningDependencyError, load_client_lib
@@ -25,6 +33,10 @@ from custom_components.xiaobiu.const import (
   CONF_INTERNATIONAL_CODE,
   CONF_PHONE_NUMBER,
   DOMAIN,
+  PRESET_AUX_HEAT,
+  PRESET_ECO,
+  PRESET_FRESH_AIR,
+  PRESET_NONE,
 )
 from custom_components.xiaobiu.iar_external_view import (
   IARCaptchaResult,
@@ -68,6 +80,118 @@ class FakeHTTP:
     self.views.append(view)
 
 
+class FakeHass:
+  """Minimal HomeAssistant stand-in for entity unit tests.
+
+  CoordinatorEntity reads ``self.hass`` in async setters to schedule
+  blocking I/O via ``async_add_executor_job``. Real HA injects this in
+  :meth:`async_added_to_hass`; tests bypass that by setting it directly.
+  """
+
+  async def async_add_executor_job(self, fn: Any, *args: Any) -> Any:
+    return fn(*args)
+
+
+@dataclass(slots=True)
+class FakeCapabilities:
+  hvac_modes: tuple[str, ...] = ("off", "cool", "heat", "auto", "dry")
+  fan_modes: tuple[str, ...] = ("auto", "low", "medium", "high", "turbo")
+  swing_modes: tuple[str, ...] = ("off", "vertical", "horizontal", "both")
+  preset_modes: tuple[str, ...] = ("none", "eco", "fresh_air", "aux_heat")
+  supports_vertical_swing: bool = True
+  supports_horizontal_swing: bool = True
+  supports_eco: bool = True
+  supports_fresh_air: bool = True
+  supports_aux_heat: bool = True
+  supports_target_temperature: bool = True
+  min_target_temperature: float = 16.0
+  max_target_temperature: float = 32.0
+
+
+def _make_climate_status(
+  *,
+  device_id: str = "ac-1",
+  family_id: str = "37790",
+  name: str = "卧室空调",
+  model: str = "KFR-35GW",
+  group_name: str = "卧室",
+  group_id: str = "group-1",
+  available: bool = True,
+  online: bool = True,
+  current_temperature: float | None = 26.0,
+  target_temperature: float | None = 24.0,
+  power_on: bool | None = True,
+  hvac_mode: Any = None,
+  hvac_action: Any = None,
+  mode_raw: str = "3",
+  fan_mode: str = "medium",
+  fan_mode_raw: str = "2",
+  swing_vertical: bool = False,
+  swing_horizontal: bool = False,
+  eco_enabled: bool = False,
+  fresh_air_enabled: bool = False,
+  electric_heating_enabled: bool = False,
+) -> SimpleNamespace:
+  if hvac_mode is None:
+    hvac_mode = SimpleNamespace(value="cool", name="COOL")
+  if hvac_action is None:
+    hvac_action = SimpleNamespace(value="cooling", name="COOLING")
+  return SimpleNamespace(
+    device_id=device_id,
+    name=name,
+    model=model,
+    group_name=group_name,
+    group_id=group_id,
+    family_id=family_id,
+    category_id="0002",
+    available=available,
+    online=online,
+    current_temperature=current_temperature,
+    target_temperature=target_temperature,
+    power_on=power_on,
+    hvac_mode=hvac_mode,
+    hvac_action=hvac_action,
+    mode_raw=mode_raw,
+    fan_mode=fan_mode,
+    fan_mode_raw=fan_mode_raw,
+    swing_vertical=swing_vertical,
+    swing_horizontal=swing_horizontal,
+    eco_enabled=eco_enabled,
+    fresh_air_enabled=fresh_air_enabled,
+    electric_heating_enabled=electric_heating_enabled,
+    summary="在线",
+    device_record_time="2026-03-20T00:00:00Z",
+    refresh_time="2026-03-20T00:05:00Z",
+    raw_status={},
+    raw_device={},
+  )
+
+
+def _make_climate_coordinator(
+  *,
+  status: Any | None = None,
+  capabilities: Any | None = None,
+  client: Any = None,
+) -> Any:
+  status = status if status is not None else _make_climate_status()
+
+  async def _async_request_refresh() -> None:
+    return None
+
+  return SimpleNamespace(
+    status_for=lambda _device_id: status,
+    capabilities_for=lambda _device_id: capabilities,
+    client=client or SimpleNamespace(),
+    device_ids=("ac-1",),
+    async_request_refresh=_async_request_refresh,
+  )
+
+
+def _attach_hass(entity: SuningClimateEntity) -> SuningClimateEntity:
+  entity.hass = FakeHass()  # type: ignore[assignment]
+  return entity
+
+
 def test_load_client_lib_wraps_runtime_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr(
     "custom_components.xiaobiu.client_lib._load_client_lib",
@@ -103,6 +227,9 @@ async def test_async_setup_entry_ignores_legacy_har_path_and_initializes_client(
     def list_air_conditioner_statuses(self, family_id: str) -> list[object]:
       assert family_id == "37790"
       return [SimpleNamespace(device_id="ac-1")]
+
+    def get_device_panel_template(self, family_id: str, device_id: str) -> object:
+      return None
 
   hass = HomeAssistant(str(tmp_path))
   hass.config_entries = FakeConfigEntriesManager()
@@ -1043,59 +1170,395 @@ async def test_iar_captcha_view_ignores_duplicate_success_callbacks(
 
 
 def test_climate_entity_exposes_expected_state() -> None:
-  status = SimpleNamespace(
-    device_id="ac-1",
-    name="卧室空调",
-    model="KFR-35GW",
-    group_name="卧室",
-    available=True,
-    current_temperature=26.0,
-    target_temperature=24.0,
-    family_id="37790",
-    group_id="group-1",
-    summary="在线",
-    device_record_time="2026-03-20T00:00:00Z",
-    refresh_time="2026-03-20T00:05:00Z",
-    mode_raw="3",
-    fan_mode_raw="2",
-    online=True,
-    ha_climate_preview=SimpleNamespace(hvac_mode="off"),
+  status = _make_climate_status(
+    hvac_mode=SimpleNamespace(value="cool", name="COOL"),
+    hvac_action=SimpleNamespace(value="cooling", name="COOLING"),
   )
-  coordinator = SimpleNamespace(status_for=lambda _device_id: status)
-  entry = FakeConfigEntry(data={}, entry_id="entry-1")
-
-  entity = SuningClimateEntity(
-    coordinator=coordinator,
-    entry=entry,
-    device_id="ac-1",
-  )
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities())
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-1"))
 
   assert entity.available is True
-  assert entity.hvac_modes == [HVACMode.OFF]
-  assert entity.hvac_mode == HVACMode.OFF
+  assert entity.hvac_mode == HVACMode.COOL
+  assert entity.hvac_action == HVACAction.COOLING
+  assert HVACMode.COOL in entity.hvac_modes
+  assert HVACMode.HEAT in entity.hvac_modes
+  assert HVACMode.OFF in entity.hvac_modes
   assert entity.current_temperature == 26.0
   assert entity.target_temperature == 24.0
+  assert entity.min_temp == 16.0
+  assert entity.max_temp == 32.0
   assert entity.device_info["identifiers"] == {(DOMAIN, "ac-1")}
   assert entity.extra_state_attributes[CONF_FAMILY_ID] == "37790"
+  assert entity.extra_state_attributes["hvac_mode"] == "cool"
+  assert entity.extra_state_attributes["hvac_action"] == "cooling"
+  assert entity.extra_state_attributes["capabilities_loaded"] is True
+  assert (entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE) == ClimateEntityFeature.TARGET_TEMPERATURE
+  assert (entity.supported_features & ClimateEntityFeature.FAN_MODE) == ClimateEntityFeature.FAN_MODE
+  assert (entity.supported_features & ClimateEntityFeature.SWING_MODE) == ClimateEntityFeature.SWING_MODE
+  assert (entity.supported_features & ClimateEntityFeature.SWING_HORIZONTAL_MODE) == ClimateEntityFeature.SWING_HORIZONTAL_MODE
+  assert (entity.supported_features & ClimateEntityFeature.PRESET_MODE) == ClimateEntityFeature.PRESET_MODE
+
+
+def test_climate_entity_exposes_dynamic_hvac_modes_from_capabilities() -> None:
+  status = _make_climate_status()
+  capabilities = FakeCapabilities(hvac_modes=("off", "cool", "dry"))
+  coordinator = _make_climate_coordinator(status=status, capabilities=capabilities)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-1"))
+
+  assert entity.hvac_modes == [HVACMode.OFF, HVACMode.COOL, HVACMode.DRY]
+  assert entity.fan_modes == ["auto", "low", "medium", "high", "turbo"]
+  assert entity.fan_mode == "2"
+  assert entity.swing_modes == [SWING_ON, SWING_OFF]
+  assert entity.swing_mode == SWING_OFF
+  assert entity.swing_horizontal_modes == [SWING_HORIZONTAL_ON, SWING_HORIZONTAL_OFF]
+  assert entity.swing_horizontal_mode == SWING_HORIZONTAL_OFF
+  assert entity.preset_modes == [PRESET_NONE, PRESET_ECO, PRESET_FRESH_AIR, PRESET_AUX_HEAT]
+  assert entity.preset_mode == PRESET_NONE
+
+
+def test_climate_entity_falls_back_to_off_when_capabilities_missing() -> None:
+  status = _make_climate_status(power_on=True)
+  coordinator = _make_climate_coordinator(status=status, capabilities=None)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-1"))
+
+  assert entity.hvac_modes == [HVACMode.OFF]
+  assert entity.hvac_mode is None
+  assert entity.fan_modes is None
+  assert entity.swing_modes is None
+  assert entity.swing_horizontal_modes is None
+  assert entity.preset_modes is None
+  assert entity.preset_mode is None
+  assert entity.supported_features == ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+  assert entity.extra_state_attributes["capabilities_loaded"] is False
+
+
+def test_climate_entity_maps_status_hvac_mode_to_hvac_mode_enum() -> None:
+  status = _make_climate_status(
+    hvac_mode=SimpleNamespace(value="heat", name="HEAT"),
+    hvac_action=SimpleNamespace(value="heating", name="HEATING"),
+  )
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities())
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-1"))
+
+  assert entity.hvac_mode == HVACMode.HEAT
+  assert entity.hvac_action == HVACAction.HEATING
+
+
+def test_climate_entity_unmapped_hvac_mode_falls_back_to_cool() -> None:
+  status = _make_climate_status(
+    power_on=True,
+    hvac_mode=SimpleNamespace(value="quick", name="QUICK"),
+  )
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities())
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-1"))
+
+  assert entity.hvac_mode == HVACMode.COOL
 
 
 @pytest.mark.asyncio
-async def test_climate_async_setup_entry_adds_one_entity_per_device_id(tmp_path: Path) -> None:
-  captured_entities: list[Any] = []
-  coordinator = SimpleNamespace(device_ids=("ac-1", "ac-2"))
-  entry = FakeConfigEntry(
-    data={},
-    runtime_data=SimpleNamespace(coordinator=coordinator),
-    entry_id="entry-1",
-  )
+async def test_climate_turn_on_calls_client_with_family_and_device() -> None:
+  client = SimpleNamespace()
+  captured: dict[str, Any] = {}
 
-  await climate_async_setup_entry(
-    HomeAssistant(str(tmp_path)),
-    entry,
-    lambda entities: captured_entities.extend(list(entities)),
-  )
+  def _turn_on(family_id: str, device_id: str) -> dict[str, Any]:
+    captured["turn_on"] = (family_id, device_id)
+    return {}
 
-  assert [entity._device_id for entity in captured_entities] == ["ac-1", "ac-2"]  # noqa: SLF001
+  client.turn_on = _turn_on  # type: ignore[attr-defined]
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  await entity.async_turn_on()
+
+  assert captured["turn_on"] == ("42", "ac-9")
+
+
+@pytest.mark.asyncio
+async def test_climate_turn_off_calls_client_with_family_and_device() -> None:
+  client = SimpleNamespace()
+  captured: dict[str, Any] = {}
+
+  def _turn_off(family_id: str, device_id: str) -> dict[str, Any]:
+    captured["turn_off"] = (family_id, device_id)
+    return {}
+
+  client.turn_off = _turn_off  # type: ignore[attr-defined]
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  await entity.async_turn_off()
+
+  assert captured["turn_off"] == ("42", "ac-9")
+
+
+@pytest.mark.asyncio
+async def test_climate_set_hvac_mode_maps_cool_to_xiaobiu_cool() -> None:
+  client = SimpleNamespace()
+  captured: dict[str, Any] = {}
+
+  def _set_hvac_mode(family_id: str, device_id: str, mode: Any) -> dict[str, Any]:
+    captured["set_hvac_mode"] = (family_id, device_id, getattr(mode, "value", mode))
+    return {}
+
+  client.set_hvac_mode = _set_hvac_mode  # type: ignore[attr-defined]
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  await entity.async_set_hvac_mode(HVACMode.COOL)
+
+  assert captured["set_hvac_mode"][0] == "42"
+  assert captured["set_hvac_mode"][1] == "ac-9"
+  assert captured["set_hvac_mode"][2] == "cool"
+
+
+@pytest.mark.asyncio
+async def test_climate_set_hvac_mode_off_delegates_to_turn_off() -> None:
+  client = SimpleNamespace()
+  captured: dict[str, Any] = {}
+
+  def _turn_off(family_id: str, device_id: str) -> dict[str, Any]:
+    captured["turn_off"] = (family_id, device_id)
+    return {}
+
+  def _set_hvac_mode(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    captured["set_hvac_mode"] = True
+    return {}
+
+  client.turn_off = _turn_off  # type: ignore[attr-defined]
+  client.set_hvac_mode = _set_hvac_mode  # type: ignore[attr-defined]
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  await entity.async_set_hvac_mode(HVACMode.OFF)
+
+  assert captured["turn_off"] == ("42", "ac-9")
+  assert "set_hvac_mode" not in captured
+
+
+@pytest.mark.asyncio
+async def test_climate_set_temperature_calls_client() -> None:
+  client = SimpleNamespace()
+  captured: dict[str, Any] = {}
+
+  def _set_temperature(family_id: str, device_id: str, value: float) -> dict[str, Any]:
+    captured["set_temperature"] = (family_id, device_id, value)
+    return {}
+
+  client.set_temperature = _set_temperature  # type: ignore[attr-defined]
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  await entity.async_set_temperature(temperature=23.5)
+
+  assert captured["set_temperature"] == ("42", "ac-9", 23.5)
+
+
+@pytest.mark.asyncio
+async def test_climate_set_fan_mode_maps_to_xiaobiu_fan_speed() -> None:
+  client = SimpleNamespace()
+  captured: dict[str, Any] = {}
+
+  def _set_fan_mode(family_id: str, device_id: str, speed: Any) -> dict[str, Any]:
+    captured["set_fan_mode"] = (family_id, device_id, getattr(speed, "value", speed))
+    return {}
+
+  client.set_fan_mode = _set_fan_mode  # type: ignore[attr-defined]
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  await entity.async_set_fan_mode("high")
+
+  assert captured["set_fan_mode"] == ("42", "ac-9", "high")
+
+
+@pytest.mark.asyncio
+async def test_climate_set_swing_mode_sends_vertical_call_only() -> None:
+  client = SimpleNamespace()
+  captured: dict[str, Any] = {}
+
+  def _set_vertical(family_id: str, device_id: str, *, on: bool) -> dict[str, Any]:
+    captured["set_vertical_swing"] = (family_id, device_id, on)
+    return {}
+
+  def _set_horizontal(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    captured["set_horizontal_swing"] = True
+    return {}
+
+  client.set_vertical_swing = _set_vertical  # type: ignore[attr-defined]
+  client.set_horizontal_swing = _set_horizontal  # type: ignore[attr-defined]
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  await entity.async_set_swing_mode(SWING_ON)
+
+  assert captured["set_vertical_swing"] == ("42", "ac-9", True)
+  assert "set_horizontal_swing" not in captured
+
+
+@pytest.mark.asyncio
+async def test_climate_set_swing_horizontal_mode_sends_horizontal_call() -> None:
+  client = SimpleNamespace()
+  captured: dict[str, Any] = {}
+
+  def _set_horizontal(family_id: str, device_id: str, *, on: bool) -> dict[str, Any]:
+    captured["set_horizontal_swing"] = (family_id, device_id, on)
+    return {}
+
+  def _set_vertical(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    captured["set_vertical_swing"] = True
+    return {}
+
+  client.set_horizontal_swing = _set_horizontal  # type: ignore[attr-defined]
+  client.set_vertical_swing = _set_vertical  # type: ignore[attr-defined]
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  await entity.async_set_swing_horizontal_mode(SWING_HORIZONTAL_ON)
+
+  assert captured["set_horizontal_swing"] == ("42", "ac-9", True)
+  assert "set_vertical_swing" not in captured
+
+
+@pytest.mark.asyncio
+async def test_climate_set_preset_mode_none_disables_all_presets() -> None:
+  client = SimpleNamespace()
+  captured: dict[str, Any] = {}
+
+  def _set_eco(family_id: str, device_id: str, *, on: bool) -> dict[str, Any]:
+    captured["set_eco"] = (family_id, device_id, on)
+    return {}
+
+  def _set_fresh_air(family_id: str, device_id: str, *, on: bool) -> dict[str, Any]:
+    captured["set_fresh_air"] = (family_id, device_id, on)
+    return {}
+
+  def _set_aux_heat(family_id: str, device_id: str, *, on: bool) -> dict[str, Any]:
+    captured["set_aux_heat"] = (family_id, device_id, on)
+    return {}
+
+  client.set_eco = _set_eco  # type: ignore[attr-defined]
+  client.set_fresh_air = _set_fresh_air  # type: ignore[attr-defined]
+  client.set_aux_heat = _set_aux_heat  # type: ignore[attr-defined]
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  await entity.async_set_preset_mode(PRESET_NONE)
+
+  assert captured["set_eco"] == ("42", "ac-9", False)
+  assert captured["set_fresh_air"] == ("42", "ac-9", False)
+  assert captured["set_aux_heat"] == ("42", "ac-9", False)
+
+
+@pytest.mark.asyncio
+async def test_climate_set_preset_mode_eco_enables_only_eco() -> None:
+  client = SimpleNamespace()
+  captured: dict[str, Any] = {}
+
+  def _set_eco(family_id: str, device_id: str, *, on: bool) -> dict[str, Any]:
+    captured["set_eco"] = (family_id, device_id, on)
+    return {}
+
+  def _set_fresh_air(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    captured["set_fresh_air"] = True
+    return {}
+
+  def _set_aux_heat(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    captured["set_aux_heat"] = True
+    return {}
+
+  client.set_eco = _set_eco  # type: ignore[attr-defined]
+  client.set_fresh_air = _set_fresh_air  # type: ignore[attr-defined]
+  client.set_aux_heat = _set_aux_heat  # type: ignore[attr-defined]
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  await entity.async_set_preset_mode(PRESET_ECO)
+
+  assert captured["set_eco"] == ("42", "ac-9", True)
+  assert "set_fresh_air" not in captured
+  assert "set_aux_heat" not in captured
+
+
+@pytest.mark.asyncio
+async def test_climate_setter_raises_home_assistant_error_on_sms_rate_limited() -> None:
+  client_lib = load_client_lib()
+
+  def _set_temperature(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    raise client_lib.SmsRateLimitedError("短信发送太频繁，请稍后再试")
+
+  client = SimpleNamespace(set_temperature=_set_temperature)
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  with pytest.raises(HomeAssistantError, match="xiaobiu control failed"):
+    await entity.async_set_temperature(temperature=24.0)
+
+
+@pytest.mark.asyncio
+async def test_climate_setter_raises_config_entry_auth_failed_on_auth_error() -> None:
+  client_lib = load_client_lib()
+
+  def _set_temperature(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    raise client_lib.AuthenticationError("session expired")
+
+  client = SimpleNamespace(set_temperature=_set_temperature)
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  with pytest.raises(ConfigEntryAuthFailed):
+    await entity.async_set_temperature(temperature=24.0)
+
+
+@pytest.mark.asyncio
+async def test_climate_setter_refreshes_coordinator_after_success() -> None:
+  client = SimpleNamespace()
+  refresh_calls: list[int] = []
+
+  def _set_temperature(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    return {}
+
+  client.set_temperature = _set_temperature  # type: ignore[attr-defined]
+  status = _make_climate_status(family_id="42", device_id="ac-9")
+
+  async def _async_request_refresh() -> None:
+    refresh_calls.append(1)
+
+  coordinator = SimpleNamespace(
+    status_for=lambda _device_id: status,
+    capabilities_for=lambda _device_id: FakeCapabilities(),
+    client=client,
+    device_ids=("ac-9",),
+    async_request_refresh=_async_request_refresh,
+  )
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  await entity.async_set_temperature(temperature=24.0)
+
+  assert refresh_calls == [1]
+
+
+def test_climate_preset_mode_reads_status_flags() -> None:
+  status = _make_climate_status(
+    eco_enabled=True,
+    fresh_air_enabled=False,
+    electric_heating_enabled=True,
+  )
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities())
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-1"))
+
+  assert entity.preset_mode == PRESET_AUX_HEAT
 
 
 def test_strings_json_removes_har_text_and_keeps_reauth() -> None:

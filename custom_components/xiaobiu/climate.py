@@ -1,18 +1,78 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
-from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature
-from homeassistant.components.climate.const import HVACMode
-from homeassistant.const import UnitOfTemperature
-from homeassistant.core import HomeAssistant
+import requests
+
+from homeassistant.components.climate import (
+  ClimateEntity,
+  ClimateEntityFeature,
+  HVACAction,
+  HVACMode,
+)
+from homeassistant.components.climate.const import (
+  SWING_HORIZONTAL_OFF,
+  SWING_HORIZONTAL_ON,
+  SWING_OFF,
+  SWING_ON,
+)
+from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import SuningConfigEntry, SuningRuntimeData
-from .const import CONF_FAMILY_ID, DOMAIN
+from .client_lib import load_client_lib
+from .const import (
+  CONF_FAMILY_ID,
+  DOMAIN,
+  PRESET_AUX_HEAT,
+  PRESET_ECO,
+  PRESET_FRESH_AIR,
+  PRESET_NONE,
+)
 from .coordinator import SuningDataUpdateCoordinator
+
+XIAOBIU_TO_HA_HVAC: dict[str, HVACMode] = {
+  "off": HVACMode.OFF,
+  "cool": HVACMode.COOL,
+  "heat": HVACMode.HEAT,
+  "heat_cool": HVACMode.HEAT_COOL,
+  "auto": HVACMode.AUTO,
+  "dry": HVACMode.DRY,
+  "fan_only": HVACMode.FAN_ONLY,
+  "quick": HVACMode.COOL,
+}
+HA_TO_XIAOBIU_HVAC: dict[HVACMode, str] = {
+  HVACMode.OFF: "off",
+  HVACMode.COOL: "cool",
+  HVACMode.HEAT: "heat",
+  HVACMode.HEAT_COOL: "heat_cool",
+  HVACMode.AUTO: "auto",
+  HVACMode.DRY: "dry",
+  HVACMode.FAN_ONLY: "fan_only",
+}
+
+XIAOBIU_TO_HA_ACTION: dict[str, HVACAction] = {
+  "off": HVACAction.OFF,
+  "preheating": HVACAction.PREHEATING,
+  "heating": HVACAction.HEATING,
+  "cooling": HVACAction.COOLING,
+  "drying": HVACAction.DRYING,
+  "fan": HVACAction.FAN,
+  "idle": HVACAction.IDLE,
+  "defrosting": HVACAction.DEFROSTING,
+}
+
+SUPPORTED_PRESETS: tuple[str, ...] = (
+  PRESET_NONE,
+  PRESET_ECO,
+  PRESET_FRESH_AIR,
+  PRESET_AUX_HEAT,
+)
 
 
 async def async_setup_entry(
@@ -31,13 +91,13 @@ async def async_setup_entry(
   )
 
 
-class SuningClimateEntity(CoordinatorEntity[SuningDataUpdateCoordinator], ClimateEntity):
+class SuningClimateEntity(
+  CoordinatorEntity[SuningDataUpdateCoordinator], ClimateEntity,
+):
   _attr_has_entity_name = True
   _attr_translation_key = "suning_air_conditioner"
   _attr_temperature_unit = UnitOfTemperature.CELSIUS
   _attr_target_temperature_step = 1.0
-  _attr_supported_features = ClimateEntityFeature(0)
-  _enable_turn_on_off_backwards_compatibility = False
 
   def __init__(
     self,
@@ -46,7 +106,7 @@ class SuningClimateEntity(CoordinatorEntity[SuningDataUpdateCoordinator], Climat
     entry: SuningConfigEntry,
     device_id: str,
   ) -> None:
-    super().__init__(coordinator)
+    super().__init__(coordinator, context=device_id)
     self._entry = entry
     self._device_id = device_id
     self._attr_unique_id = f"{entry.entry_id}_{device_id}"
@@ -56,8 +116,15 @@ class SuningClimateEntity(CoordinatorEntity[SuningDataUpdateCoordinator], Climat
     return self.coordinator.status_for(self._device_id)
 
   @property
+  def _capabilities(self) -> Any | None:
+    return self.coordinator.capabilities_for(self._device_id)
+
+  @property
   def available(self) -> bool:
-    return self._status.available
+    try:
+      return bool(self._status.available)
+    except KeyError:
+      return False
 
   @property
   def name(self) -> str | None:
@@ -75,17 +142,60 @@ class SuningClimateEntity(CoordinatorEntity[SuningDataUpdateCoordinator], Climat
     )
 
   @property
+  def min_temp(self) -> float:
+    caps = self._capabilities
+    if caps is not None and caps.min_target_temperature is not None:
+      return float(caps.min_target_temperature)
+    return 16.0
+
+  @property
+  def max_temp(self) -> float:
+    caps = self._capabilities
+    if caps is not None and caps.max_target_temperature is not None:
+      return float(caps.max_target_temperature)
+    return 32.0
+
+  @property
   def hvac_modes(self) -> list[HVACMode]:
-    return [HVACMode.OFF]
+    caps = self._capabilities
+    if caps is None or not caps.hvac_modes:
+      return [HVACMode.OFF]
+    modes: list[HVACMode] = []
+    for raw in caps.hvac_modes:
+      mapped = XIAOBIU_TO_HA_HVAC.get(raw)
+      if mapped is not None and mapped not in modes:
+        modes.append(mapped)
+    if HVACMode.OFF not in modes:
+      modes.append(HVACMode.OFF)
+    return modes or [HVACMode.OFF]
 
   @property
   def hvac_mode(self) -> HVACMode | None:
-    preview = self._status.ha_climate_preview
-    if preview is None or preview.hvac_mode is None:
+    if self._capabilities is None:
       return None
-    if preview.hvac_mode == "off":
+    status = self._status
+    raw = getattr(status, "hvac_mode", None)
+    if raw is None:
+      if not getattr(status, "power_on", False):
+        return HVACMode.OFF
+      return None
+    value = getattr(raw, "value", raw)
+    if value == "off":
       return HVACMode.OFF
-    return None
+    mapped = XIAOBIU_TO_HA_HVAC.get(str(value))
+    if mapped is None:
+      return HVACMode.OFF
+    return mapped
+
+  @property
+  def hvac_action(self) -> HVACAction | None:
+    raw = getattr(self._status, "hvac_action", None)
+    if raw is None:
+      if self.hvac_mode == HVACMode.OFF:
+        return HVACAction.OFF
+      return HVACAction.IDLE
+    value = getattr(raw, "value", raw)
+    return XIAOBIU_TO_HA_ACTION.get(str(value))
 
   @property
   def current_temperature(self) -> float | None:
@@ -96,8 +206,99 @@ class SuningClimateEntity(CoordinatorEntity[SuningDataUpdateCoordinator], Climat
     return self._status.target_temperature
 
   @property
+  def fan_modes(self) -> list[str] | None:
+    caps = self._capabilities
+    if caps is None or not caps.fan_modes:
+      return None
+    return list(caps.fan_modes)
+
+  @property
+  def fan_mode(self) -> str | None:
+    status = self._status
+    return getattr(status, "fan_mode_raw", None) or None
+
+  @property
+  def swing_modes(self) -> list[str] | None:
+    caps = self._capabilities
+    if caps is None or not caps.supports_vertical_swing:
+      return None
+    return [SWING_ON, SWING_OFF]
+
+  @property
+  def swing_mode(self) -> str | None:
+    caps = self._capabilities
+    if caps is None or not caps.supports_vertical_swing:
+      return None
+    return SWING_ON if self._status.swing_vertical else SWING_OFF
+
+  @property
+  def swing_horizontal_modes(self) -> list[str] | None:
+    caps = self._capabilities
+    if caps is None or not caps.supports_horizontal_swing:
+      return None
+    return [SWING_HORIZONTAL_ON, SWING_HORIZONTAL_OFF]
+
+  @property
+  def swing_horizontal_mode(self) -> str | None:
+    caps = self._capabilities
+    if caps is None or not caps.supports_horizontal_swing:
+      return None
+    return SWING_HORIZONTAL_ON if self._status.swing_horizontal else SWING_HORIZONTAL_OFF
+
+  @property
+  def preset_modes(self) -> list[str] | None:
+    caps = self._capabilities
+    if caps is None:
+      return None
+    modes = [PRESET_NONE]
+    if caps.supports_eco:
+      modes.append(PRESET_ECO)
+    if caps.supports_fresh_air:
+      modes.append(PRESET_FRESH_AIR)
+    if caps.supports_aux_heat:
+      modes.append(PRESET_AUX_HEAT)
+    return modes
+
+  @property
+  def preset_mode(self) -> str | None:
+    caps = self._capabilities
+    if caps is None:
+      return None
+    status = self._status
+    if caps.supports_aux_heat and status.electric_heating_enabled:
+      return PRESET_AUX_HEAT
+    if caps.supports_eco and status.eco_enabled:
+      return PRESET_ECO
+    if caps.supports_fresh_air and status.fresh_air_enabled:
+      return PRESET_FRESH_AIR
+    return PRESET_NONE
+
+  @property
+  def supported_features(self) -> ClimateEntityFeature:
+    features = ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+    caps = self._capabilities
+    if caps is None:
+      return features
+    if caps.supports_target_temperature:
+      features |= ClimateEntityFeature.TARGET_TEMPERATURE
+    if caps.fan_modes:
+      features |= ClimateEntityFeature.FAN_MODE
+    if caps.supports_vertical_swing:
+      features |= ClimateEntityFeature.SWING_MODE
+    if caps.supports_horizontal_swing:
+      features |= ClimateEntityFeature.SWING_HORIZONTAL_MODE
+    if caps.supports_eco or caps.supports_fresh_air or caps.supports_aux_heat:
+      features |= ClimateEntityFeature.PRESET_MODE
+    return features
+
+  @property
   def extra_state_attributes(self) -> dict[str, Any]:
     status = self._status
+    caps = self._capabilities
+    raw_action = getattr(status, "hvac_action", None)
+    action_value = getattr(raw_action, "value", raw_action) if raw_action else None
+    raw_mode = getattr(status, "hvac_mode", None)
+    mode_value = getattr(raw_mode, "value", raw_mode) if raw_mode else None
     return {
       CONF_FAMILY_ID: status.family_id,
       "group_id": status.group_id,
@@ -108,4 +309,111 @@ class SuningClimateEntity(CoordinatorEntity[SuningDataUpdateCoordinator], Climat
       "raw_mode": status.mode_raw,
       "raw_fan_mode": status.fan_mode_raw,
       "online": status.online,
+      "hvac_mode": mode_value,
+      "hvac_action": action_value,
+      "swing_vertical": getattr(status, "swing_vertical", None),
+      "swing_horizontal": getattr(status, "swing_horizontal", None),
+      "capabilities_loaded": caps is not None,
     }
+
+  @callback
+  def _handle_coordinator_update(self) -> None:
+    self.async_write_ha_state()
+
+  async def _async_execute(self, fn, *args, **kwargs) -> None:
+    client_lib = load_client_lib()
+    bound = partial(fn, *args, **kwargs)
+    try:
+      await self.hass.async_add_executor_job(bound)
+    except client_lib.AuthenticationError as err:
+      raise ConfigEntryAuthFailed(str(err)) from err
+    except (
+      client_lib.SuningError,
+      client_lib.SmsRateLimitedError,
+      requests.RequestException,
+    ) as err:
+      raise HomeAssistantError(f"xiaobiu control failed: {err}") from err
+    await self.coordinator.async_request_refresh()
+
+  def _resolve_control_ids(self) -> tuple[str, str]:
+    status = self._status
+    return str(status.family_id), str(status.device_id)
+
+  async def async_turn_on(self) -> None:
+    family_id, device_id = self._resolve_control_ids()
+    await self._async_execute(
+      self.coordinator.client.turn_on, family_id, device_id,
+    )
+
+  async def async_turn_off(self) -> None:
+    family_id, device_id = self._resolve_control_ids()
+    await self._async_execute(
+      self.coordinator.client.turn_off, family_id, device_id,
+    )
+
+  async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+    xb_mode = HA_TO_XIAOBIU_HVAC.get(hvac_mode)
+    if xb_mode is None:
+      raise HomeAssistantError(f"unsupported HVAC mode: {hvac_mode}")
+    family_id, device_id = self._resolve_control_ids()
+    if xb_mode == "off":
+      await self._async_execute(
+        self.coordinator.client.turn_off, family_id, device_id,
+      )
+      return
+    client_lib = load_client_lib()
+    await self._async_execute(
+      self.coordinator.client.set_hvac_mode,
+      family_id, device_id, client_lib.HvacMode(xb_mode),
+    )
+
+  async def async_set_temperature(self, **kwargs: Any) -> None:
+    temperature = kwargs.get(ATTR_TEMPERATURE)
+    if temperature is None:
+      return
+    family_id, device_id = self._resolve_control_ids()
+    await self._async_execute(
+      self.coordinator.client.set_temperature,
+      family_id, device_id, float(temperature),
+    )
+
+  async def async_set_fan_mode(self, fan_mode: str) -> None:
+    client_lib = load_client_lib()
+    family_id, device_id = self._resolve_control_ids()
+    await self._async_execute(
+      self.coordinator.client.set_fan_mode,
+      family_id, device_id, client_lib.FanSpeed(fan_mode),
+    )
+
+  async def async_set_swing_mode(self, swing_mode: str) -> None:
+    on = swing_mode == SWING_ON
+    family_id, device_id = self._resolve_control_ids()
+    await self._async_execute(
+      self.coordinator.client.set_vertical_swing,
+      family_id, device_id, on=on,
+    )
+
+  async def async_set_swing_horizontal_mode(self, swing_horizontal_mode: str) -> None:
+    on = swing_horizontal_mode == SWING_HORIZONTAL_ON
+    family_id, device_id = self._resolve_control_ids()
+    await self._async_execute(
+      self.coordinator.client.set_horizontal_swing,
+      family_id, device_id, on=on,
+    )
+
+  async def async_set_preset_mode(self, preset_mode: str) -> None:
+    if preset_mode not in SUPPORTED_PRESETS:
+      raise HomeAssistantError(f"unsupported preset mode: {preset_mode}")
+    family_id, device_id = self._resolve_control_ids()
+    client = self.coordinator.client
+    if preset_mode == PRESET_NONE:
+      await self._async_execute(client.set_eco, family_id, device_id, on=False)
+      await self._async_execute(client.set_fresh_air, family_id, device_id, on=False)
+      await self._async_execute(client.set_aux_heat, family_id, device_id, on=False)
+      return
+    if preset_mode == PRESET_ECO:
+      await self._async_execute(client.set_eco, family_id, device_id, on=True)
+    elif preset_mode == PRESET_FRESH_AIR:
+      await self._async_execute(client.set_fresh_air, family_id, device_id, on=True)
+    elif preset_mode == PRESET_AUX_HEAT:
+      await self._async_execute(client.set_aux_heat, family_id, device_id, on=True)

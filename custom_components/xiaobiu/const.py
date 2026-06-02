@@ -12,3 +12,8 @@ CONF_FAMILY_NAME = "family_name"
 
 DEFAULT_INTERNATIONAL_CODE = "0086"
 SCAN_INTERVAL = timedelta(minutes=5)
+
+PRESET_NONE = "none"
+PRESET_ECO = "eco"
+PRESET_FRESH_AIR = "fresh_air"
+PRESET_AUX_HEAT = "aux_heat"
