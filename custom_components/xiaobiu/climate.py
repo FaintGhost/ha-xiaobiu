@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
+import logging
 from typing import Any
 
 import requests
@@ -35,6 +36,8 @@ from .const import (
   PRESET_NONE,
 )
 from .coordinator import SuningDataUpdateCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 XIAOBIU_TO_HA_HVAC: dict[str, HVACMode] = {
   "off": HVACMode.OFF,
@@ -159,7 +162,14 @@ class SuningClimateEntity(
   def hvac_modes(self) -> list[HVACMode]:
     caps = self._capabilities
     if caps is None or not caps.hvac_modes:
-      return [HVACMode.OFF]
+      _LOGGER.debug(
+        "xiaobiu %s: no capabilities, defaulting hvac_modes to safe subset",
+        self._device_id,
+      )
+      return [
+        HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT,
+        HVACMode.AUTO, HVACMode.DRY, HVACMode.FAN_ONLY,
+      ]
     modes: list[HVACMode] = []
     for raw in caps.hvac_modes:
       mapped = XIAOBIU_TO_HA_HVAC.get(raw)
@@ -171,20 +181,24 @@ class SuningClimateEntity(
 
   @property
   def hvac_mode(self) -> HVACMode | None:
-    if self._capabilities is None:
-      return None
     status = self._status
     raw = getattr(status, "hvac_mode", None)
     if raw is None:
-      if not getattr(status, "power_on", False):
+      if getattr(status, "power_on", None) is False:
         return HVACMode.OFF
+      _LOGGER.debug(
+        "xiaobiu %s: status.hvac_mode is None and power_on=%r, returning None",
+        self._device_id, getattr(status, "power_on", None),
+      )
       return None
     value = getattr(raw, "value", raw)
     if value == "off":
       return HVACMode.OFF
     mapped = XIAOBIU_TO_HA_HVAC.get(str(value))
     if mapped is None:
-      return HVACMode.OFF
+      _LOGGER.debug(
+        "xiaobiu %s: unmapped hvac_mode %r, returning None", self._device_id, value,
+      )
     return mapped
 
   @property
@@ -321,6 +335,28 @@ class SuningClimateEntity(
 
   @callback
   def _handle_coordinator_update(self) -> None:
+    status = self._status
+    caps = self._capabilities
+    _LOGGER.debug(
+      "xiaobiu %s: state update — power_on=%s mode_raw=%r hvac_mode=%r "
+      "hvac_action=%r fan_raw=%r swing_v=%s swing_h=%s eco=%s fresh=%s aux=%s "
+      "caps=%s available=%s current_temp=%s target_temp=%s",
+      self._device_id,
+      getattr(status, "power_on", None),
+      getattr(status, "mode_raw", None),
+      getattr(getattr(status, "hvac_mode", None), "value", None),
+      getattr(getattr(status, "hvac_action", None), "value", None),
+      getattr(status, "fan_mode_raw", None),
+      getattr(status, "swing_vertical", None),
+      getattr(status, "swing_horizontal", None),
+      getattr(status, "eco_enabled", None),
+      getattr(status, "fresh_air_enabled", None),
+      getattr(status, "electric_heating_enabled", None),
+      caps is not None,
+      getattr(status, "available", None),
+      getattr(status, "current_temperature", None),
+      getattr(status, "target_temperature", None),
+    )
     self.async_write_ha_state()
 
   async def _async_execute(self, fn, *args, **kwargs) -> None:
