@@ -1366,7 +1366,7 @@ async def test_climate_set_hvac_mode_cool_combines_power_and_mode_when_off() -> 
   await entity.async_set_hvac_mode(HVACMode.COOL)
 
   assert captured == [
-    ("app_oper", ("ac-9", "KFR-35GW", {"C_POWER": "1", "C_MODE": "1"})),
+    ("app_oper", ("ac-9", "KFR-35GW", {"C_POWER": "1", "C_MODE": "2"})),
   ]
 
 

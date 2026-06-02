@@ -39,10 +39,10 @@ class SuningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]]):
     self._capabilities_warned: set[str] = set()
 
   async def _async_update_data(self) -> dict[str, object]:
-    from xiaobiu.ac_control import (
-      infer_fan_speed,
-      infer_hvac_action,
-      infer_hvac_mode,
+    from .climate import (
+      C_FIELD_TO_HVAC_MODE,
+      FAN_SPEED_FROM_RAW,
+      infer_hvac_action_from,
     )
 
     client_lib = load_client_lib()
@@ -59,22 +59,26 @@ class SuningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]]):
 
     enriched: dict[str, object] = {}
     for status in statuses:
-      hvac_mode = infer_hvac_mode(
-        power_on=status.power_on, mode_raw=status.mode_raw,
-      )
-      hvac_action = infer_hvac_action(
+      # status.SN_MODE is the SNV index; the C_FIELD table below mirrors the
+      # HAR queryTemplate keys array (k="1"->制热, k="2"->制冷, k="3"->除湿,
+      # k="4"->送风, k="6"->一键通). xiaobiu 0.2.1 ships an incorrect mapping
+      # where it confuses SNV and C_FIELD indexing, so we re-derive locally.
+      snv = str(getattr(status, "mode_raw", None) or "").strip()
+      hvac_mode = C_FIELD_TO_HVAC_MODE.get(snv)
+      hvac_action = infer_hvac_action_from(
         power_on=status.power_on,
         hvac_mode=hvac_mode,
         current_temp=status.current_temperature,
         target_temp=status.target_temperature,
       )
-      fan_mode = infer_fan_speed(status.fan_mode_raw)
+      fan_mode = FAN_SPEED_FROM_RAW.get(
+        str(getattr(status, "fan_mode_raw", None) or "").strip()
+      )
       try:
         status.hvac_mode = hvac_mode  # type: ignore[attr-defined]
         status.hvac_action = hvac_action  # type: ignore[attr-defined]
         status.fan_mode = fan_mode  # type: ignore[attr-defined]
       except (AttributeError, ValueError):
-        # SuningBaseModel should allow validate_assignment; fall back silently.
         pass
       enriched[status.device_id] = status
     return enriched
