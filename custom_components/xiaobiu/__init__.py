@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
+import logging
 from pathlib import Path
 
 import requests
@@ -13,6 +14,8 @@ from homeassistant.exceptions import (
   ConfigEntryAuthFailed,
   ConfigEntryNotReady,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 from .const import (
   CONF_FAMILY_ID,
@@ -80,7 +83,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: SuningConfigEntry) -> bo
   await coordinator.async_load_capabilities()
 
   entry.runtime_data = SuningRuntimeData(client=client, coordinator=coordinator)
+  _LOGGER.info(
+    "xiaobiu: setup complete for %s, found %d device(s): %s",
+    phone_number,
+    len(coordinator.device_ids),
+    coordinator.device_ids,
+  )
   await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+  _LOGGER.info(
+    "xiaobiu: forwarded setup to platforms %s for %s",
+    PLATFORMS, phone_number,
+  )
   return True
 
 
