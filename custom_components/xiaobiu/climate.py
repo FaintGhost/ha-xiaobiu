@@ -337,7 +337,7 @@ class SuningClimateEntity(
   def _handle_coordinator_update(self) -> None:
     status = self._status
     caps = self._capabilities
-    _LOGGER.debug(
+    _LOGGER.info(
       "xiaobiu %s: state update — power_on=%s mode_raw=%r hvac_mode=%r "
       "hvac_action=%r fan_raw=%r swing_v=%s swing_h=%s eco=%s fresh=%s aux=%s "
       "caps=%s available=%s current_temp=%s target_temp=%s",
@@ -378,6 +378,10 @@ class SuningClimateEntity(
         "xiaobiu %s: control call failed: %s", self._device_id, err,
       )
       raise HomeAssistantError(f"xiaobiu control failed: {err}") from err
+    _LOGGER.info(
+      "xiaobiu %s: control call returned, requesting coordinator refresh",
+      self._device_id,
+    )
     await self.coordinator.async_request_refresh()
 
   def _resolve_control_ids(self) -> tuple[str, str]:
