@@ -454,10 +454,13 @@ async def test_user_step_restarts_same_phone_flow_and_clears_old_iar_session(
     "_abort_if_unique_id_configured",
     lambda: None,
   )
+  async def _fake_async_initialize_client() -> tuple[Any, str | None]:
+    return (SimpleNamespace(), None)
+
   monkeypatch.setattr(
     flow,
-    "_initialize_client",
-    lambda: (SimpleNamespace(), None),
+    "_async_initialize_client",
+    _fake_async_initialize_client,
   )
 
   async def fake_async_send_sms(*_args: Any, **_kwargs: Any) -> dict[str, Any]:

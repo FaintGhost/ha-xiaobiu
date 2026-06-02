@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 import requests
@@ -54,8 +55,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: SuningConfigEntry) -> bo
     client_lib = load_client_lib()
   except SuningDependencyError as error:
     raise ConfigEntryNotReady(str(error)) from error
-  client = client_lib.SuningSmartHomeClient(
-    state_path=session_state_path(hass, international_code, phone_number),
+  client = await hass.async_add_executor_job(
+    partial(
+      client_lib.SuningSmartHomeClient,
+      state_path=session_state_path(hass, international_code, phone_number),
+    ),
   )
   client.state.phone_number = phone_number
   client.state.international_code = international_code

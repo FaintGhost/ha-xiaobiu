@@ -51,7 +51,7 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       self._abort_if_unique_id_configured()
       self._abort_existing_user_flows(unique_id)
 
-      client_lib, error_key = self._initialize_client()
+      client_lib, error_key = await self._async_initialize_client()
       if error_key is None and client_lib is not None:
         try:
           return await self._async_send_sms()
@@ -83,7 +83,7 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     errors: dict[str, str] = {}
 
     if user_input is not None:
-      client_lib, error_key = self._initialize_client()
+      client_lib, error_key = await self._async_initialize_client()
       if error_key is None and client_lib is not None:
         try:
           return await self._async_send_sms()
@@ -109,7 +109,7 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     self._international_code = configured_entry.data[CONF_INTERNATIONAL_CODE]
 
     if user_input is not None:
-      client_lib, error_key = self._initialize_client(load_state=True)
+      client_lib, error_key = await self._async_initialize_client(load_state=True)
       if error_key is None and client_lib is not None:
         try:
           self._families = await self.hass.async_add_executor_job(self._client.list_family_infos)
@@ -138,7 +138,7 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     errors: dict[str, str] = {}
 
     if user_input is not None:
-      client_lib, error_key = self._initialize_client(load_state=False)
+      client_lib, error_key = await self._async_initialize_client(load_state=False)
       if error_key is None and client_lib is not None:
         try:
           return await self._async_send_sms()
@@ -338,7 +338,9 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       value=user_input["captcha_value"].strip(),
     )
 
-  def _initialize_client(self, *, load_state: bool = False) -> tuple[Any | None, str | None]:
+  async def _async_initialize_client(
+    self, *, load_state: bool = False,
+  ) -> tuple[Any | None, str | None]:
     try:
       client_lib = load_client_lib()
     except SuningDependencyError:
@@ -347,18 +349,26 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     if self._phone_number is None:
       return client_lib, "cannot_connect"
 
-    self._client = client_lib.SuningSmartHomeClient(
-      state_path=session_state_path(
-        self.hass,
-        self._international_code,
-        self._phone_number,
-      ),
-      load_state=load_state,
+    state_path = session_state_path(
+      self.hass,
+      self._international_code,
+      self._phone_number,
     )
-    self._client.state.phone_number = self._phone_number
-    self._client.state.international_code = self._international_code
-    if not load_state:
-      self._client.reset_sms_login_state()
+    phone_number = self._phone_number
+    international_code = self._international_code
+
+    def _construct() -> Any:
+      client = client_lib.SuningSmartHomeClient(
+        state_path=state_path,
+        load_state=load_state,
+      )
+      client.state.phone_number = phone_number
+      client.state.international_code = international_code
+      if not load_state:
+        client.reset_sms_login_state()
+      return client
+
+    self._client = await self.hass.async_add_executor_job(_construct)
     return client_lib, None
 
   def _family_schema(self) -> vol.Schema:
