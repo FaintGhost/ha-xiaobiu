@@ -223,7 +223,7 @@ class SuningClimateEntity(
   def fan_modes(self) -> list[str] | None:
     caps = self._capabilities
     if caps is None or not caps.fan_modes:
-      return None
+      return ["auto", "low", "medium", "high", "turbo"]
     return list(caps.fan_modes)
 
   @property
@@ -237,28 +237,32 @@ class SuningClimateEntity(
   @property
   def swing_modes(self) -> list[str] | None:
     caps = self._capabilities
-    if caps is None or not caps.supports_vertical_swing:
+    if caps is None:
+      return [SWING_ON, SWING_OFF]
+    if not caps.supports_vertical_swing:
       return None
     return [SWING_ON, SWING_OFF]
 
   @property
   def swing_mode(self) -> str | None:
     caps = self._capabilities
-    if caps is None or not caps.supports_vertical_swing:
+    if caps is not None and not caps.supports_vertical_swing:
       return None
     return SWING_ON if self._status.swing_vertical else SWING_OFF
 
   @property
   def swing_horizontal_modes(self) -> list[str] | None:
     caps = self._capabilities
-    if caps is None or not caps.supports_horizontal_swing:
+    if caps is None:
+      return [SWING_HORIZONTAL_ON, SWING_HORIZONTAL_OFF]
+    if not caps.supports_horizontal_swing:
       return None
     return [SWING_HORIZONTAL_ON, SWING_HORIZONTAL_OFF]
 
   @property
   def swing_horizontal_mode(self) -> str | None:
     caps = self._capabilities
-    if caps is None or not caps.supports_horizontal_swing:
+    if caps is not None and not caps.supports_horizontal_swing:
       return None
     return SWING_HORIZONTAL_ON if self._status.swing_horizontal else SWING_HORIZONTAL_OFF
 
@@ -292,19 +296,18 @@ class SuningClimateEntity(
 
   @property
   def supported_features(self) -> ClimateEntityFeature:
-    features = ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
-    caps = self._capabilities
-    if caps is None:
-      return features
-    if caps.supports_target_temperature:
-      features |= ClimateEntityFeature.TARGET_TEMPERATURE
-    if caps.fan_modes:
+    features = (
+      ClimateEntityFeature.TURN_ON
+      | ClimateEntityFeature.TURN_OFF
+      | ClimateEntityFeature.TARGET_TEMPERATURE
+    )
+    if self.fan_modes:
       features |= ClimateEntityFeature.FAN_MODE
-    if caps.supports_vertical_swing:
+    if self.swing_modes:
       features |= ClimateEntityFeature.SWING_MODE
-    if caps.supports_horizontal_swing:
+    if self.swing_horizontal_modes:
       features |= ClimateEntityFeature.SWING_HORIZONTAL_MODE
-    if caps.supports_eco or caps.supports_fresh_air or caps.supports_aux_heat:
+    if self.preset_modes:
       features |= ClimateEntityFeature.PRESET_MODE
     return features
 
@@ -424,6 +427,17 @@ class SuningClimateEntity(
         self.coordinator.client.turn_off, family_id, device_id,
       )
       return
+    # Suning's app_oper is a single-field command: C_MODE does not imply
+    # C_POWER. If the device is currently off, send turn_on first so the
+    # subsequent set_hvac_mode actually changes something physical.
+    if getattr(self._status, "power_on", True) is False:
+      _LOGGER.info(
+        "xiaobiu %s: device is off, sending turn_on before set_hvac_mode",
+        self._device_id,
+      )
+      await self._async_execute(
+        self.coordinator.client.turn_on, family_id, device_id,
+      )
     client_lib = load_client_lib()
     await self._async_execute(
       self.coordinator.client.set_hvac_mode,
