@@ -226,7 +226,14 @@ async def test_async_setup_entry_ignores_legacy_har_path_and_initializes_client(
 
     def list_air_conditioner_statuses(self, family_id: str) -> list[object]:
       assert family_id == "37790"
-      return [SimpleNamespace(device_id="ac-1")]
+      return [SimpleNamespace(
+        device_id="ac-1",
+        power_on=True,
+        mode_raw="1",
+        fan_mode_raw="2",
+        current_temperature=26.0,
+        target_temperature=24.0,
+      )]
 
     def get_device_panel_template(self, family_id: str, device_id: str) -> object:
       return None
@@ -1210,7 +1217,7 @@ def test_climate_entity_exposes_dynamic_hvac_modes_from_capabilities() -> None:
 
   assert entity.hvac_modes == [HVACMode.OFF, HVACMode.COOL, HVACMode.DRY]
   assert entity.fan_modes == ["auto", "low", "medium", "high", "turbo"]
-  assert entity.fan_mode == "2"
+  assert entity.fan_mode == "medium"
   assert entity.swing_modes == [SWING_ON, SWING_OFF]
   assert entity.swing_mode == SWING_OFF
   assert entity.swing_horizontal_modes == [SWING_HORIZONTAL_ON, SWING_HORIZONTAL_OFF]

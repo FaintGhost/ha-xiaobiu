@@ -39,6 +39,12 @@ class SuningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]]):
     self._capabilities_warned: set[str] = set()
 
   async def _async_update_data(self) -> dict[str, object]:
+    from xiaobiu.ac_control import (
+      infer_fan_speed,
+      infer_hvac_action,
+      infer_hvac_mode,
+    )
+
     client_lib = load_client_lib()
     try:
       await self.hass.async_add_executor_job(self.client.keep_alive)
@@ -51,7 +57,27 @@ class SuningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]]):
     except (client_lib.SuningError, requests.RequestException) as error:
       raise UpdateFailed(str(error)) from error
 
-    return {status.device_id: status for status in statuses}
+    enriched: dict[str, object] = {}
+    for status in statuses:
+      hvac_mode = infer_hvac_mode(
+        power_on=status.power_on, mode_raw=status.mode_raw,
+      )
+      hvac_action = infer_hvac_action(
+        power_on=status.power_on,
+        hvac_mode=hvac_mode,
+        current_temp=status.current_temperature,
+        target_temp=status.target_temperature,
+      )
+      fan_mode = infer_fan_speed(status.fan_mode_raw)
+      try:
+        status.hvac_mode = hvac_mode  # type: ignore[attr-defined]
+        status.hvac_action = hvac_action  # type: ignore[attr-defined]
+        status.fan_mode = fan_mode  # type: ignore[attr-defined]
+      except (AttributeError, ValueError):
+        # SuningBaseModel should allow validate_assignment; fall back silently.
+        pass
+      enriched[status.device_id] = status
+    return enriched
 
   async def async_load_capabilities(self) -> None:
     """Fetch each AC's device panel template once after the first refresh.

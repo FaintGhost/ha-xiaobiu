@@ -215,7 +215,10 @@ class SuningClimateEntity(
   @property
   def fan_mode(self) -> str | None:
     status = self._status
-    return getattr(status, "fan_mode_raw", None) or None
+    raw = getattr(status, "fan_mode", None)
+    if raw is None:
+      return None
+    return getattr(raw, "value", raw)
 
   @property
   def swing_modes(self) -> list[str] | None:
