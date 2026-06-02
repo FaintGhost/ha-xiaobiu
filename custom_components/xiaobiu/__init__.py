@@ -73,6 +73,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SuningConfigEntry) -> bo
   except (client_lib.SuningError, requests.RequestException) as error:
     raise ConfigEntryNotReady(str(error)) from error
 
+  await coordinator.async_load_capabilities()
+
   entry.runtime_data = SuningRuntimeData(client=client, coordinator=coordinator)
   await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
   return True
