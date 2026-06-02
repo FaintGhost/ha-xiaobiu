@@ -59,6 +59,18 @@ HA_TO_XIAOBIU_HVAC: dict[HVACMode, str] = {
   HVACMode.FAN_ONLY: "fan_only",
 }
 
+# Mirrors xiaobiu.ac_control.HVAC_TO_C_FIELD: maps the xiaobiu mode string
+# (the value of xiaobiu.HvacMode) to the C_MODE field Suning's app_oper
+# endpoint expects. Used to combine C_POWER=1 + C_MODE into a single
+# app_oper call when the device is currently off.
+XIAOBIU_HVAC_TO_C_FIELD: dict[str, str] = {
+  "cool": "1",
+  "heat": "2",
+  "fan_only": "3",
+  "dry": "4",
+  "auto": "6",
+}
+
 XIAOBIU_TO_HA_ACTION: dict[str, HVACAction] = {
   "off": HVACAction.OFF,
   "preheating": HVACAction.PREHEATING,
@@ -427,18 +439,33 @@ class SuningClimateEntity(
         self.coordinator.client.turn_off, family_id, device_id,
       )
       return
-    # Suning's app_oper is a single-field command: C_MODE does not imply
-    # C_POWER. If the device is currently off, send turn_on first so the
-    # subsequent set_hvac_mode actually changes something physical.
+    client_lib = load_client_lib()
+    # Suning's app_oper is a single-field command and C_MODE does not imply
+    # C_POWER, so sending them in two separate calls leaves a brief window
+    # where the device flips to its default mode (often fan_only) and the
+    # follow-up set_hvac_mode is then dropped. Combine power + mode into a
+    # single multi-field app_oper call when the unit is currently off.
     if getattr(self._status, "power_on", True) is False:
+      model_id = getattr(self._status, "model", None) or ""
+      c_field = XIAOBIU_HVAC_TO_C_FIELD.get(xb_mode)
+      if model_id and c_field:
+        _LOGGER.info(
+          "xiaobiu %s: device is off, sending combined C_POWER=1 + C_MODE=%s in one call",
+          self._device_id, c_field,
+        )
+        await self._async_execute(
+          self.coordinator.client.app_oper,
+          device_id, model_id,
+          {"C_POWER": "1", "C_MODE": c_field},
+        )
+        return
       _LOGGER.info(
-        "xiaobiu %s: device is off, sending turn_on before set_hvac_mode",
+        "xiaobiu %s: device is off and model/c_field unknown, falling back to turn_on + set_hvac_mode",
         self._device_id,
       )
       await self._async_execute(
         self.coordinator.client.turn_on, family_id, device_id,
       )
-    client_lib = load_client_lib()
     await self._async_execute(
       self.coordinator.client.set_hvac_mode,
       family_id, device_id, client_lib.HvacMode(xb_mode),

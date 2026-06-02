@@ -1338,9 +1338,46 @@ async def test_climate_set_hvac_mode_maps_cool_to_xiaobiu_cool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_climate_set_hvac_mode_cool_turns_on_first_when_off() -> None:
+async def test_climate_set_hvac_mode_cool_combines_power_and_mode_when_off() -> None:
   client = SimpleNamespace()
   captured: list[tuple[str, tuple[Any, ...]]] = []
+
+  def _app_oper(device_id: str, model_id: str, cmd: dict[str, Any]) -> dict[str, Any]:
+    captured.append(("app_oper", (device_id, model_id, dict(cmd))))
+    return {}
+
+  def _turn_on(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    captured.append(("turn_on", ()))
+    return {}
+
+  def _set_hvac_mode(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    captured.append(("set_hvac_mode", ()))
+    return {}
+
+  client.app_oper = _app_oper  # type: ignore[attr-defined]
+  client.turn_on = _turn_on  # type: ignore[attr-defined]
+  client.set_hvac_mode = _set_hvac_mode  # type: ignore[attr-defined]
+  status = _make_climate_status(
+    family_id="42", device_id="ac-9", power_on=False, model="KFR-35GW",
+  )
+  coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
+  entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
+
+  await entity.async_set_hvac_mode(HVACMode.COOL)
+
+  assert captured == [
+    ("app_oper", ("ac-9", "KFR-35GW", {"C_POWER": "1", "C_MODE": "1"})),
+  ]
+
+
+@pytest.mark.asyncio
+async def test_climate_set_hvac_mode_cool_falls_back_to_two_calls_when_model_unknown() -> None:
+  client = SimpleNamespace()
+  captured: list[tuple[str, tuple[Any, ...]]] = []
+
+  def _app_oper(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    captured.append(("app_oper", ()))
+    return {}
 
   def _turn_on(family_id: str, device_id: str) -> dict[str, Any]:
     captured.append(("turn_on", (family_id, device_id)))
@@ -1350,9 +1387,12 @@ async def test_climate_set_hvac_mode_cool_turns_on_first_when_off() -> None:
     captured.append(("set_hvac_mode", (family_id, device_id, getattr(mode, "value", mode))))
     return {}
 
+  client.app_oper = _app_oper  # type: ignore[attr-defined]
   client.turn_on = _turn_on  # type: ignore[attr-defined]
   client.set_hvac_mode = _set_hvac_mode  # type: ignore[attr-defined]
-  status = _make_climate_status(family_id="42", device_id="ac-9", power_on=False)
+  status = _make_climate_status(
+    family_id="42", device_id="ac-9", power_on=False, model=None,
+  )
   coordinator = _make_climate_coordinator(status=status, capabilities=FakeCapabilities(), client=client)
   entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-9"))
 
