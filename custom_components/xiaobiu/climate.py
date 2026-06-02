@@ -365,12 +365,18 @@ class SuningClimateEntity(
     try:
       await self.hass.async_add_executor_job(bound)
     except client_lib.AuthenticationError as err:
+      _LOGGER.warning(
+        "xiaobiu %s: auth error during control: %s", self._device_id, err,
+      )
       raise ConfigEntryAuthFailed(str(err)) from err
     except (
       client_lib.SuningError,
       client_lib.SmsRateLimitedError,
       requests.RequestException,
     ) as err:
+      _LOGGER.warning(
+        "xiaobiu %s: control call failed: %s", self._device_id, err,
+      )
       raise HomeAssistantError(f"xiaobiu control failed: {err}") from err
     await self.coordinator.async_request_refresh()
 
@@ -379,22 +385,36 @@ class SuningClimateEntity(
     return str(status.family_id), str(status.device_id)
 
   async def async_turn_on(self) -> None:
+    _LOGGER.info("xiaobiu %s: turn_on requested", self._device_id)
     family_id, device_id = self._resolve_control_ids()
     await self._async_execute(
       self.coordinator.client.turn_on, family_id, device_id,
     )
 
   async def async_turn_off(self) -> None:
+    _LOGGER.info("xiaobiu %s: turn_off requested", self._device_id)
     family_id, device_id = self._resolve_control_ids()
     await self._async_execute(
       self.coordinator.client.turn_off, family_id, device_id,
     )
 
   async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+    _LOGGER.info(
+      "xiaobiu %s: set_hvac_mode requested, hvac_mode=%s",
+      self._device_id, hvac_mode,
+    )
     xb_mode = HA_TO_XIAOBIU_HVAC.get(hvac_mode)
     if xb_mode is None:
+      _LOGGER.error(
+        "xiaobiu %s: no xiaobiu mapping for HA mode %s",
+        self._device_id, hvac_mode,
+      )
       raise HomeAssistantError(f"unsupported HVAC mode: {hvac_mode}")
     family_id, device_id = self._resolve_control_ids()
+    _LOGGER.debug(
+      "xiaobiu %s: dispatching %s -> xiaobiu mode=%r family=%s device=%s",
+      self._device_id, hvac_mode, xb_mode, family_id, device_id,
+    )
     if xb_mode == "off":
       await self._async_execute(
         self.coordinator.client.turn_off, family_id, device_id,
@@ -410,6 +430,10 @@ class SuningClimateEntity(
     temperature = kwargs.get(ATTR_TEMPERATURE)
     if temperature is None:
       return
+    _LOGGER.info(
+      "xiaobiu %s: set_temperature requested, target=%s",
+      self._device_id, temperature,
+    )
     family_id, device_id = self._resolve_control_ids()
     await self._async_execute(
       self.coordinator.client.set_temperature,
@@ -417,6 +441,10 @@ class SuningClimateEntity(
     )
 
   async def async_set_fan_mode(self, fan_mode: str) -> None:
+    _LOGGER.info(
+      "xiaobiu %s: set_fan_mode requested, fan_mode=%s",
+      self._device_id, fan_mode,
+    )
     client_lib = load_client_lib()
     family_id, device_id = self._resolve_control_ids()
     await self._async_execute(
@@ -425,6 +453,10 @@ class SuningClimateEntity(
     )
 
   async def async_set_swing_mode(self, swing_mode: str) -> None:
+    _LOGGER.info(
+      "xiaobiu %s: set_swing_mode requested, swing_mode=%s",
+      self._device_id, swing_mode,
+    )
     on = swing_mode == SWING_ON
     family_id, device_id = self._resolve_control_ids()
     await self._async_execute(
@@ -433,6 +465,10 @@ class SuningClimateEntity(
     )
 
   async def async_set_swing_horizontal_mode(self, swing_horizontal_mode: str) -> None:
+    _LOGGER.info(
+      "xiaobiu %s: set_swing_horizontal_mode requested, mode=%s",
+      self._device_id, swing_horizontal_mode,
+    )
     on = swing_horizontal_mode == SWING_HORIZONTAL_ON
     family_id, device_id = self._resolve_control_ids()
     await self._async_execute(
@@ -441,6 +477,10 @@ class SuningClimateEntity(
     )
 
   async def async_set_preset_mode(self, preset_mode: str) -> None:
+    _LOGGER.info(
+      "xiaobiu %s: set_preset_mode requested, preset=%s",
+      self._device_id, preset_mode,
+    )
     if preset_mode not in SUPPORTED_PRESETS:
       raise HomeAssistantError(f"unsupported preset mode: {preset_mode}")
     family_id, device_id = self._resolve_control_ids()
