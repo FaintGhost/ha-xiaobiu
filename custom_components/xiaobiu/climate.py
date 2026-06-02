@@ -71,6 +71,11 @@ XIAOBIU_HVAC_TO_C_FIELD: dict[str, str] = {
   "auto": "6",
 }
 
+# Reverse of XIAOBIU_HVAC_TO_C_FIELD, used to translate a C_MODE field
+# value that came back from the app_oper endpoint into the xiaobiu mode
+# string that the climate entity expects on AirConditionerStatus.hvac_mode.
+XIAOBIU_C_FIELD_TO_HVAC: dict[str, str] = {v: k for k, v in XIAOBIU_HVAC_TO_C_FIELD.items()}
+
 XIAOBIU_TO_HA_ACTION: dict[str, HVACAction] = {
   "off": HVACAction.OFF,
   "preheating": HVACAction.PREHEATING,
@@ -397,7 +402,53 @@ class SuningClimateEntity(
       "xiaobiu %s: control call returned, requesting coordinator refresh",
       self._device_id,
     )
+    self._apply_optimistic_update(bound)
     await self.coordinator.async_request_refresh()
+
+  def _apply_optimistic_update(self, bound) -> None:
+    """Update coordinator.data[device_id] in place so the UI reflects
+    the new state immediately.
+
+    The Suning ``appOper`` endpoint accepts the command live, but
+    ``shcss/all`` (which feeds ``list_air_conditioner_statuses``) only
+    refreshes from the device's next self-report — which on a quiet
+    unit can be many minutes. Without optimistic updates the user
+    sees the entity stay stale until then.
+    """
+    status = self.coordinator.status_for(self._device_id)
+    kwargs = getattr(bound, "keywords", None) or {}
+    args = getattr(bound, "args", ()) or ()
+    family_id, device_id = self._resolve_control_ids()
+    new_power_on: bool | None = None
+    new_hvac_mode: str | None = None
+    bound_func = getattr(bound, "func", None)
+    client_obj = self.coordinator.client
+    if bound_func is getattr(client_obj, "turn_off", None):
+      new_power_on = False
+    elif bound_func is getattr(client_obj, "turn_on", None):
+      new_power_on = True
+    elif bound_func is getattr(client_obj, "set_hvac_mode", None):
+      mode_arg = kwargs.get("mode") or (bound.args[2] if len(bound.args) > 2 else None)
+      if mode_arg is not None:
+        new_hvac_mode = getattr(mode_arg, "value", str(mode_arg))
+        new_power_on = True
+    elif bound_func is getattr(client_obj, "app_oper", None):
+      cmd = kwargs.get("cmd") or {}
+      if "C_POWER" in cmd:
+        new_power_on = cmd["C_POWER"] == "1"
+      if "C_MODE" in cmd:
+        new_hvac_mode = XIAOBIU_C_FIELD_TO_HVAC.get(cmd["C_MODE"], "fan_only")
+        new_power_on = True
+    try:
+      if new_power_on is not None:
+        status.power_on = new_power_on  # type: ignore[attr-defined]
+      if new_hvac_mode is not None:
+        status.hvac_mode = new_hvac_mode  # type: ignore[attr-defined]
+        c_field = XIAOBIU_HVAC_TO_C_FIELD.get(new_hvac_mode)
+        if c_field is not None:
+          status.mode_raw = c_field
+    except (AttributeError, ValueError):
+      pass
 
   def _resolve_control_ids(self) -> tuple[str, str]:
     status = self._status
