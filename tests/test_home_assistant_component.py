@@ -1231,8 +1231,13 @@ def test_climate_entity_falls_back_to_off_when_capabilities_missing() -> None:
   coordinator = _make_climate_coordinator(status=status, capabilities=None)
   entity = _attach_hass(SuningClimateEntity(coordinator=coordinator, entry=FakeConfigEntry(data={}), device_id="ac-1"))
 
-  assert entity.hvac_modes == [HVACMode.OFF]
-  assert entity.hvac_mode is None
+  assert entity.hvac_modes == [
+    HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT,
+    HVACMode.AUTO, HVACMode.DRY, HVACMode.FAN_ONLY,
+  ]
+  # hvac_mode comes from status, not from capabilities
+  assert entity.hvac_mode == HVACMode.COOL
+  assert entity.hvac_action == HVACAction.COOLING
   assert entity.fan_modes is None
   assert entity.swing_modes is None
   assert entity.swing_horizontal_modes is None
