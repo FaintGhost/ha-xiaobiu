@@ -59,22 +59,85 @@ HA_TO_XIAOBIU_HVAC: dict[HVACMode, str] = {
   HVACMode.FAN_ONLY: "fan_only",
 }
 
-# Mirrors xiaobiu.ac_control.HVAC_TO_C_FIELD: maps the xiaobiu mode string
-# (the value of xiaobiu.HvacMode) to the C_MODE field Suning's app_oper
-# endpoint expects. Used to combine C_POWER=1 + C_MODE into a single
-# app_oper call when the device is currently off.
-XIAOBIU_HVAC_TO_C_FIELD: dict[str, str] = {
-  "cool": "1",
-  "heat": "2",
-  "fan_only": "3",
-  "dry": "4",
-  "auto": "6",
+# Real C_FIELD mapping derived from HAR queryTemplate keys array for
+# modelId 0001000200150000. The 0.2.1 xiaobiu mapping (cool=1, heat=2,
+# fan_only=3, dry=4, quick=5, auto=6) is **wrong** — it confused the
+# SNV status index with the C_FIELD app_oper value. The C_FIELD
+# values Suning's appOper endpoint actually expects are:
+#   C_FIELD=1 -> 制热 (HEAT)
+#   C_FIELD=2 -> 制冷 (COOL)
+#   C_FIELD=3 -> 除湿 (DRY)
+#   C_FIELD=4 -> 送风 (FAN_ONLY)
+#   C_FIELD=6 -> 一键通 (QUICK)
+# and status.SN_MODE uses the same numeric encoding (snV column of
+# the keys array). We feed both the setter and the status decoder
+# from this single source of truth.
+C_FIELD_TO_HVAC_MODE: dict[str, HVACMode] = {
+  "1": HVACMode.HEAT,
+  "2": HVACMode.COOL,
+  "3": HVACMode.DRY,
+  "4": HVACMode.FAN_ONLY,
+  "6": HVACMode.HEAT_COOL,  # 一键通 has no HA equivalent; map to HEAT_COOL
+}
+HVAC_MODE_TO_C_FIELD: dict[HVACMode, str] = {
+  v: k for k, v in C_FIELD_TO_HVAC_MODE.items()
+}
+HVAC_MODE_TO_C_FIELD.setdefault(HVACMode.OFF, "off")  # OFF handled separately
+
+# Real C_FANSPEED mapping from HAR appOper C_FANSPEED=<n> commands.
+FAN_SPEED_FROM_RAW: dict[str, str] = {
+  "0": "auto",
+  "1": "silent",
+  "2": "low",
+  "3": "medium",
+  "4": "high",
+  "5": "turbo",
 }
 
-# Reverse of XIAOBIU_HVAC_TO_C_FIELD, used to translate a C_MODE field
-# value that came back from the app_oper endpoint into the xiaobiu mode
-# string that the climate entity expects on AirConditionerStatus.hvac_mode.
-XIAOBIU_C_FIELD_TO_HVAC: dict[str, str] = {v: k for k, v in XIAOBIU_HVAC_TO_C_FIELD.items()}
+
+def _to_hvac_mode(value: Any) -> HVACMode | None:
+  if isinstance(value, HVACMode):
+    return value
+  if value is None:
+    return None
+  raw = str(value).strip()
+  for member in HVACMode:
+    if member.value == raw or member.name.lower() == raw.lower():
+      return member
+  return None
+
+
+def infer_hvac_action_from(
+  *,
+  power_on: bool | None,
+  hvac_mode: HVACMode | None,
+  current_temp: float | None,
+  target_temp: float | None,
+) -> HVACAction | None:
+  """Replicate xiaobiu 0.2.1's infer_hvac_action without depending on it."""
+  if power_on is None:
+    return None
+  if power_on is False or hvac_mode == HVACMode.OFF:
+    return HVACAction.OFF
+  if hvac_mode is None:
+    return HVACAction.IDLE
+  if hvac_mode == HVACMode.DRY:
+    return HVACAction.DRYING
+  if hvac_mode == HVACMode.FAN_ONLY:
+    return HVACAction.FAN
+  if current_temp is None or target_temp is None:
+    return HVACAction.IDLE
+  if hvac_mode == HVACMode.HEAT:
+    return HVACAction.HEATING if current_temp < target_temp else HVACAction.IDLE
+  if hvac_mode == HVACMode.COOL:
+    return HVACAction.COOLING if current_temp > target_temp else HVACAction.IDLE
+  if hvac_mode in (HVACMode.HEAT_COOL, HVACMode.AUTO):
+    if current_temp < target_temp:
+      return HVACAction.HEATING
+    if current_temp > target_temp:
+      return HVACAction.COOLING
+    return HVACAction.IDLE
+  return HVACAction.IDLE
 
 XIAOBIU_TO_HA_ACTION: dict[str, HVACAction] = {
   "off": HVACAction.OFF,
@@ -437,14 +500,21 @@ class SuningClimateEntity(
       if "C_POWER" in cmd:
         new_power_on = cmd["C_POWER"] == "1"
       if "C_MODE" in cmd:
-        new_hvac_mode = XIAOBIU_C_FIELD_TO_HVAC.get(cmd["C_MODE"], "fan_only")
+        c_field = cmd["C_MODE"]
+        new_hvac_mode_obj = C_FIELD_TO_HVAC_MODE.get(c_field)
+        new_hvac_mode = new_hvac_mode_obj.value if new_hvac_mode_obj else None
         new_power_on = True
     try:
       if new_power_on is not None:
         status.power_on = new_power_on  # type: ignore[attr-defined]
       if new_hvac_mode is not None:
         status.hvac_mode = new_hvac_mode  # type: ignore[attr-defined]
-        c_field = XIAOBIU_HVAC_TO_C_FIELD.get(new_hvac_mode)
+        c_field = HVAC_MODE_TO_C_FIELD.get(new_hvac_mode) if isinstance(new_hvac_mode, HVACMode) else None
+        if c_field is None:
+          # new_hvac_mode may be a string from set_hvac_mode path
+          c_field = HVAC_MODE_TO_C_FIELD.get(
+            _to_hvac_mode(new_hvac_mode)  # type: ignore[arg-type]
+          )
         if c_field is not None:
           status.mode_raw = c_field
     except (AttributeError, ValueError):
@@ -498,7 +568,8 @@ class SuningClimateEntity(
     # single multi-field app_oper call when the unit is currently off.
     if getattr(self._status, "power_on", True) is False:
       model_id = getattr(self._status, "model", None) or ""
-      c_field = XIAOBIU_HVAC_TO_C_FIELD.get(xb_mode)
+      target_mode = _to_hvac_mode(xb_mode)
+      c_field = HVAC_MODE_TO_C_FIELD.get(target_mode) if target_mode else None
       if model_id and c_field:
         _LOGGER.info(
           "xiaobiu %s: device is off, sending combined C_POWER=1 + C_MODE=%s in one call",
