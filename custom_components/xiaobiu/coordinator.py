@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import logging
+from time import monotonic
 from typing import Any
 
 import requests
@@ -12,7 +13,8 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .client_lib import load_client_lib
-from .const import DOMAIN, SCAN_INTERVAL
+from .const import DOMAIN, KEEP_ALIVE_INTERVAL, SCAN_INTERVAL
+from .protocol import get_device_capabilities, normalize_hvac_status
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,17 +39,12 @@ class SuningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]]):
     self.family_id = family_id
     self._capabilities: dict[str, Any] = {}
     self._capabilities_warned: set[str] = set()
+    self._last_keep_alive: float | None = None
 
   async def _async_update_data(self) -> dict[str, object]:
-    from .climate import (
-      C_FIELD_TO_HVAC_MODE,
-      FAN_SPEED_FROM_RAW,
-      infer_hvac_action_from,
-    )
-
     client_lib = load_client_lib()
     try:
-      await self.hass.async_add_executor_job(self.client.keep_alive)
+      await self._async_keep_alive_if_needed()
       statuses = await self.hass.async_add_executor_job(
         self.client.list_air_conditioner_statuses,
         self.family_id,
@@ -57,31 +54,30 @@ class SuningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]]):
     except (client_lib.SuningError, requests.RequestException) as error:
       raise UpdateFailed(str(error)) from error
 
-    enriched: dict[str, object] = {}
     for status in statuses:
-      # status.SN_MODE is the SNV index; the C_FIELD table below mirrors the
-      # HAR queryTemplate keys array (k="1"->制热, k="2"->制冷, k="3"->除湿,
-      # k="4"->送风, k="6"->一键通). xiaobiu 0.2.1 ships an incorrect mapping
-      # where it confuses SNV and C_FIELD indexing, so we re-derive locally.
-      snv = str(getattr(status, "mode_raw", None) or "").strip()
-      hvac_mode = C_FIELD_TO_HVAC_MODE.get(snv)
-      hvac_action = infer_hvac_action_from(
-        power_on=status.power_on,
-        hvac_mode=hvac_mode,
-        current_temp=status.current_temperature,
-        target_temp=status.target_temperature,
+      normalize_hvac_status(status)
+      _LOGGER.debug(
+        "xiaobiu poll %s: refresh=%r power=%r mode=%r raw_mode=%r temp=%r fan=%r eco=%r",
+        getattr(status, "device_id", None),
+        getattr(status, "refresh_time", None),
+        getattr(status, "power_on", None),
+        getattr(status, "hvac_mode", None),
+        getattr(status, "mode_raw", None),
+        getattr(status, "target_temperature", None),
+        getattr(status, "fan_mode_raw", None),
+        getattr(status, "eco_enabled", None),
       )
-      fan_mode = FAN_SPEED_FROM_RAW.get(
-        str(getattr(status, "fan_mode_raw", None) or "").strip()
-      )
-      try:
-        status.hvac_mode = hvac_mode  # type: ignore[attr-defined]
-        status.hvac_action = hvac_action  # type: ignore[attr-defined]
-        status.fan_mode = fan_mode  # type: ignore[attr-defined]
-      except (AttributeError, ValueError):
-        pass
-      enriched[status.device_id] = status
-    return enriched
+    return {status.device_id: status for status in statuses}
+
+  async def _async_keep_alive_if_needed(self) -> None:
+    now = monotonic()
+    if (
+      self._last_keep_alive is not None
+      and now - self._last_keep_alive < KEEP_ALIVE_INTERVAL.total_seconds()
+    ):
+      return
+    await self.hass.async_add_executor_job(self.client.keep_alive)
+    self._last_keep_alive = now
 
   async def async_load_capabilities(self) -> None:
     """Fetch each AC's device panel template once after the first refresh.
@@ -98,9 +94,9 @@ class SuningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]]):
         continue
       try:
         caps = await self.hass.async_add_executor_job(
-          self.client.get_device_panel_template,
-          self.family_id,
-          device_id,
+          get_device_capabilities,
+          self.client,
+          self.data[device_id],
         )
       except client_lib.AuthenticationError as error:
         raise ConfigEntryAuthFailed(str(error)) from error

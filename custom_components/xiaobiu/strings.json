@@ -62,11 +62,25 @@
     "climate": {
       "suning_air_conditioner": {
         "name": "Air conditioner",
-        "preset_modes": {
-          "none": "None",
-          "eco": "Eco",
-          "fresh_air": "Fresh air",
-          "aux_heat": "Aux heating"
+        "state_attributes": {
+          "fan_mode": {
+            "state": {
+              "auto": "Auto",
+              "silent": "Silent",
+              "low": "Low",
+              "medium": "Medium",
+              "high": "High",
+              "turbo": "Turbo"
+            }
+          },
+          "preset_mode": {
+            "state": {
+              "none": "None",
+              "eco": "Eco",
+              "fresh_air": "Fresh air",
+              "aux_heat": "Auxiliary heat"
+            }
+          }
         }
       }
     }

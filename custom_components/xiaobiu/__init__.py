@@ -15,16 +15,16 @@ from homeassistant.exceptions import (
   ConfigEntryNotReady,
 )
 
-_LOGGER = logging.getLogger(__name__)
-
+from .client_lib import SuningDependencyError, load_client_lib
 from .const import (
   CONF_FAMILY_ID,
   CONF_INTERNATIONAL_CODE,
   CONF_PHONE_NUMBER,
   DOMAIN,
 )
-from .client_lib import SuningDependencyError, load_client_lib
 from .coordinator import SuningDataUpdateCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: tuple[Platform, ...] = (Platform.CLIMATE,)
 
