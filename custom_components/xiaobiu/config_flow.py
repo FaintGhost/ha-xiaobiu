@@ -23,14 +23,23 @@ from .const import (
   CONF_FAMILY_NAME,
   CONF_INTERNATIONAL_CODE,
   CONF_PHONE_NUMBER,
+  CONF_SCAN_INTERVAL,
   DEFAULT_INTERNATIONAL_CODE,
+  DEFAULT_SCAN_INTERVAL,
   DOMAIN,
+  SCAN_INTERVAL_OPTIONS,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+  @staticmethod
+  def async_get_options_flow(
+    config_entry: config_entries.ConfigEntry,
+  ) -> config_entries.OptionsFlow:
+    return SuningOptionsFlow()
+
   VERSION = 1
 
   def __init__(self) -> None:
@@ -453,3 +462,24 @@ class SuningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
   def _clear_iar_captcha_session(self) -> None:
     async_remove_iar_captcha_session(self.hass, self.flow_id)
+
+
+class SuningOptionsFlow(config_entries.OptionsFlow):
+  """Only the polling cadence is configurable."""
+
+  async def async_step_init(
+    self, user_input: dict[str, Any] | None = None
+  ) -> ConfigFlowResult:
+    if user_input is not None:
+      return self.async_create_entry(data=user_input)
+    current = self.config_entry.options.get(
+      CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+    )
+    schema = vol.Schema(
+      {
+        vol.Required(CONF_SCAN_INTERVAL, default=current): vol.In(
+          list(SCAN_INTERVAL_OPTIONS)
+        ),
+      }
+    )
+    return self.async_show_form(step_id="init", data_schema=schema)

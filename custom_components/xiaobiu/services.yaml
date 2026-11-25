@@ -1,0 +1,56 @@
+set_timer:
+  name: 设置空调定时
+  description: >-
+    在苏宁云端创建或修改一条定时器。云端没有删除接口，
+    传 enabled=false 即把该条定时停用。
+  target:
+    entity:
+      integration: xiaobiu
+      domain: climate
+  fields:
+    hour:
+      name: 小时
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 23
+          mode: box
+    minute:
+      name: 分钟
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 59
+          mode: box
+    weekdays:
+      name: 星期
+      description: 不选表示每天。
+      selector:
+        select:
+          multiple: true
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+    power_on:
+      name: 开机
+      description: true 表示到点开机，false 表示到点关机。
+      default: true
+      selector:
+        boolean:
+    enabled:
+      name: 启用
+      description: false 等于停用这条定时（云端无法删除）。
+      default: true
+      selector:
+        boolean:
+    name:
+      name: 定时名称
+      selector:
+        text:

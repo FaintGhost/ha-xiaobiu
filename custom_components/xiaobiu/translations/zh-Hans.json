@@ -70,5 +70,15 @@
         }
       }
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "选项",
+        "data": {
+          "scan_interval": "轮询间隔（秒）"
+        }
+      }
+    }
   }
 }

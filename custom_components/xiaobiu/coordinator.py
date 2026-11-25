@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import timedelta
 import logging
 from time import monotonic
 from typing import Any
@@ -13,7 +14,12 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .client_lib import load_client_lib
-from .const import DOMAIN, KEEP_ALIVE_INTERVAL, SCAN_INTERVAL
+from .const import (
+  CONF_SCAN_INTERVAL,
+  DEFAULT_SCAN_INTERVAL,
+  DOMAIN,
+  KEEP_ALIVE_INTERVAL,
+)
 from .protocol import get_device_capabilities, normalize_hvac_status
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,7 +38,11 @@ class SuningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]]):
       hass,
       _LOGGER,
       name=f"{DOMAIN}_{family_id}",
-      update_interval=SCAN_INTERVAL,
+      update_interval=timedelta(
+        seconds=config_entry.options.get(
+          CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+        )
+      ),
       config_entry=config_entry,
     )
     self.client = client
